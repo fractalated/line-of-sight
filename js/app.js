@@ -243,7 +243,9 @@ function fitStations() {
 map.on('click', (e) => {
   const p = e.latlng.wrap();
   const key = state.mode === 'dual' ? state.target : 'a';
-  placeStation(key, p.lat, p.lng, { pan: state.mode === 'single' });
+  // Zoomed far out, the analysis circle would be invisible: zoom to it instead of panning.
+  const far = map.getZoom() < 9;
+  placeStation(key, p.lat, p.lng, { pan: !far && state.mode === 'single', fit: far });
 });
 
 function placeStation(key, lat, lon, { pan = false, fit = false } = {}) {

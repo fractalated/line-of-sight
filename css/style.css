@@ -87,6 +87,7 @@ html, body {
   flex-direction: column;
   gap: 12px;
 }
+.panel-body > * { flex-shrink: 0; } /* scroll instead of squashing sections */
 .panel.collapsed .panel-body { display: none; }
 .panel.collapsed .panel-head { border-bottom: 0; }
 .panel.collapsed #panelToggle svg { transform: rotate(180deg); }
