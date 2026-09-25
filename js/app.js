@@ -191,13 +191,15 @@ const ShadingToggle = L.Control.extend({
 const shadingToggle = new ShadingToggle().addTo(map);
 map.on('layeradd layerremove', (e) => { if (e.layer === losLayer) shadingToggle.update(); });
 
-// Copy-coordinates mode: while on, a map click copies "lat, lon" instead of moving a station.
-// Right-click (long-press on phones) copies at any time.
-let copyMode = false;
-const CopyToggle = L.Control.extend({
+// Crosshair: a fixed reticle at the center of the visible map with a live "lat, lon"
+// readout and a Copy button, so it's clear exactly which point gets copied. Drag the map
+// to aim; a click moves the clicked spot under the crosshair. Right-click (long-press on
+// phones) still copies the clicked point directly, at any time.
+let crosshairOn = false;
+const CrosshairToggle = L.Control.extend({
   options: { position: 'topright' },
   onAdd() {
-    const btn = L.DomUtil.create('button', 'leaflet-bar map-btn copy-toggle');
+    const btn = L.DomUtil.create('button', 'leaflet-bar map-btn crosshair-toggle');
     btn.type = 'button';
     btn.innerHTML = `
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -205,28 +207,83 @@ const CopyToggle = L.Control.extend({
         <path d="M12 2v5M12 17v5M2 12h5M17 12h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg><span></span>`;
     L.DomEvent.disableClickPropagation(btn);
-    L.DomEvent.on(btn, 'click', () => setCopyMode(!copyMode));
+    L.DomEvent.on(btn, 'click', () => setCrosshair(!crosshairOn));
     this._btn = btn;
     this.update();
     return btn;
   },
   update() {
-    this._btn.classList.toggle('active', copyMode);
-    this._btn.setAttribute('aria-pressed', String(copyMode));
-    this._btn.title = copyMode
-      ? 'Copy mode is on: click the map to copy a location. Click here or press Esc to stop.'
-      : 'Copy a location\'s latitude, longitude (tip: right-click the map any time)';
-    this._btn.querySelector('span').textContent = copyMode ? 'Click map to copy' : 'Copy lat/long';
+    this._btn.classList.toggle('active', crosshairOn);
+    this._btn.setAttribute('aria-pressed', String(crosshairOn));
+    this._btn.title = crosshairOn
+      ? 'Hide the crosshair (Esc)'
+      : 'Show a crosshair with its latitude, longitude, ready to copy';
+    this._btn.querySelector('span').textContent = crosshairOn ? 'Crosshair on' : 'Crosshair';
   },
 });
-const copyToggle = new CopyToggle().addTo(map);
+const crosshairToggle = new CrosshairToggle().addTo(map);
 
-function setCopyMode(on) {
-  copyMode = on;
-  map.getContainer().classList.toggle('picking', on);
-  copyToggle.update();
+// Readout box at the side (under the Crosshair button): live coordinates + Copy.
+const CrosshairReadout = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const box = L.DomUtil.create('div', 'leaflet-bar xh-readout');
+    box.hidden = true;
+    box.innerHTML = `
+      <div class="xh-label">Crosshair location</div>
+      <div class="xh-row">
+        <span id="xhCoords" class="xh-coords"></span>
+        <button type="button" id="xhCopy" class="xh-copy">Copy</button>
+      </div>`;
+    L.DomEvent.disableClickPropagation(box);
+    L.DomEvent.disableScrollPropagation(box);
+    return box;
+  },
+});
+const crosshairReadout = new CrosshairReadout().addTo(map);
+
+// Center of the part of the map the panel doesn't cover, in container pixels.
+function crosshairPoint() {
+  const size = map.getSize();
+  const panel = $('#panel');
+  if (window.innerWidth <= 700) return L.point(size.x / 2, Math.max(60, (size.y - panel.offsetHeight) / 2));
+  const right = panel.classList.contains('collapsed') ? 0 : panel.getBoundingClientRect().right;
+  return L.point((right + size.x) / 2, size.y / 2);
 }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && copyMode) setCopyMode(false); });
+
+const crosshairLatLng = () => map.containerPointToLatLng(crosshairPoint()).wrap();
+const fmtLatLon = (ll) => `${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`;
+
+function updateCrosshair() {
+  if (!crosshairOn) return;
+  const pt = crosshairPoint();
+  const el = $('#crosshair');
+  el.style.left = `${pt.x}px`;
+  el.style.top = `${pt.y}px`;
+  $('#xhCoords').textContent = fmtLatLon(crosshairLatLng());
+}
+
+function setCrosshair(on) {
+  crosshairOn = on;
+  $('#crosshair').hidden = !on;
+  crosshairReadout.getContainer().hidden = !on;
+  map.getContainer().classList.toggle('aiming', on);
+  crosshairToggle.update();
+  updateCrosshair();
+}
+
+map.on('move zoom resize', updateCrosshair);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && crosshairOn) setCrosshair(false); });
+
+let copiedTimer = null;
+$('#xhCopy').addEventListener('click', async () => {
+  const ok = await copyCoords(crosshairLatLng());
+  const btn = $('#xhCopy');
+  btn.textContent = ok ? 'Copied ✓' : 'Copy';
+  btn.classList.toggle('done', ok);
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1800);
+});
 
 function legacyCopy(text) {
   const ta = document.createElement('textarea');
@@ -242,7 +299,7 @@ function legacyCopy(text) {
 }
 
 async function copyCoords(latlng) {
-  const text = `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
+  const text = fmtLatLon(latlng);
   let ok = false;
   try {
     await navigator.clipboard.writeText(text);
@@ -252,6 +309,7 @@ async function copyCoords(latlng) {
   }
   pingAt(latlng, ok);
   showToast(text, ok);
+  return ok;
 }
 
 // Expanding ring at the copied spot, then gone.
@@ -374,7 +432,11 @@ function fitStations() {
 
 map.on('click', (e) => {
   const p = e.latlng.wrap();
-  if (copyMode) { copyCoords(p); return; }
+  if (crosshairOn) {
+    // Bring the clicked spot under the crosshair instead of moving a station.
+    map.panBy(map.latLngToContainerPoint(e.latlng).subtract(crosshairPoint()));
+    return;
+  }
   const key = state.mode === 'dual' ? state.target : 'a';
   // Zoomed far out, the analysis circle would be invisible: zoom to it instead of panning.
   const far = map.getZoom() < 9;
@@ -832,6 +894,7 @@ function wireControls() {
   new ResizeObserver(() => {
     const sheet = window.innerWidth <= 700 ? $('#panel').offsetHeight : 0;
     document.documentElement.style.setProperty('--sheet-h', `${sheet}px`);
+    updateCrosshair();
   }).observe($('#panel'));
 
   let resizeTimer;

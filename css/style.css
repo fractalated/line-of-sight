@@ -50,7 +50,6 @@ html, body {
 #map { position: fixed; inset: 0; }
 
 .leaflet-container { font: inherit; background: #1a1f24; }
-.leaflet-container.picking { cursor: crosshair; }
 .leaflet-pane.leaflet-labels-pane { pointer-events: none; }
 
 /* ---------- Panel ---------- */
@@ -285,8 +284,43 @@ body:not(.dual) .dual-only { display: none; }
 .shading-toggle .slash { display: none; }
 .shading-toggle.off { color: #8a1450; background: #ffe3f1; }
 .shading-toggle.off .slash { display: inline; }
-.copy-toggle.active { color: #fff; background: #1d6fd1; }
-.copy-toggle.active:hover { background: #185fb4; }
+.crosshair-toggle.active { color: #fff; background: #1d6fd1; }
+.crosshair-toggle.active:hover { background: #185fb4; }
+
+/* ---------- Crosshair (fixed at the visible map center) ---------- */
+.crosshair {
+  position: fixed;
+  width: 0;
+  height: 0;
+  z-index: 900; /* above the map, below the panel and controls */
+  pointer-events: none;
+}
+.crosshair .reticle { position: absolute; left: -28px; top: -28px; }
+.xh-readout {
+  clear: both;
+  padding: 8px 8px 8px 11px;
+  background: rgba(17, 24, 32, 0.9);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+.leaflet-touch .leaflet-bar.xh-readout { border: 2px solid rgba(0, 0, 0, 0.2); background-clip: padding-box; }
+.xh-readout[hidden] { display: none !important; }
+.xh-label { font: 600 11px/1.2 system-ui, sans-serif; color: #b9c4cf; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 5px; }
+.xh-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.xh-coords { font: 600 14px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; user-select: all; -webkit-user-select: all; }
+.xh-copy {
+  font: 700 13px/1 system-ui, sans-serif;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  min-width: 84px; /* same width for "Copy" and "Copied ✓" */
+  background: #ff1493;
+  color: #fff;
+  cursor: pointer;
+}
+.xh-copy:hover { background: #e0117f; }
+.xh-copy.done { background: #1f9d55; }
+.leaflet-container.aiming { cursor: pointer; }
 
 /* ---------- Copy confirmation ---------- */
 .toast {
