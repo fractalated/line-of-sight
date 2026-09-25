@@ -66,7 +66,7 @@ Distances use meters-per-pixel at the observer's latitude (fine for ≤100 km).
 **Two-station mode**: both viewsheds use the same "other radio" target height. Colors:
 **hot pink (#FF1493) with a white outline = both see it** (owner asked for the overlap to be
 very noticeable), blue = A only, orange = B only, shade color = neither. The pink is drawn at a
-fixed 85% (`BOTH_ALPHA`) whatever the shade-strength slider says. That means alpha is baked
+fixed 60% (`BOTH_ALPHA`, white outline at 85%) whatever the shade-strength slider says. That means alpha is baked
 into the overlay pixels (the image overlay itself is at opacity 1), so moving the slider
 repaints the overlay. Single-station mode still leaves visible areas unshaded. The A↔B
 profile gives the direct simplex verdict: blocked / marginal (<60% of Fresnel zone 1 clear) / clear.
@@ -104,7 +104,7 @@ math uses the DEM.
 - Pure geometric line of sight: no diffraction, clutter, or signal-strength model. VHF often
   reaches a bit past geometric LOS through diffraction; the UI notes that clutter isn't modeled.
 - Shading is deliberately light, so the map shows through (owner found it too dark): default
-  strength 0.4, and the "dark" shade is a slate `[20, 24, 40]` rather than near-black.
+  strength 0.3 (owner then asked for all colors to be more transparent), and the "dark" shade is a slate `[20, 24, 40]` rather than near-black.
 - A "Shading on/off" button on the map (top right, `ShadingToggle` control) hides or shows
   `losLayer`, including the pink overlap. It stays in sync with the layers-menu checkbox. It is
   not persisted: shading is always on at page load.

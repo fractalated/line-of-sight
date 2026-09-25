@@ -22,7 +22,8 @@ const ONLY_B = [255, 150, 20];
 // stands out no matter how the shade-strength slider is set.
 const BOTH = [255, 20, 147];
 const BOTH_EDGE = [255, 255, 255];
-const BOTH_ALPHA = 0.85;
+const BOTH_ALPHA = 0.6;
+const BOTH_EDGE_ALPHA = 0.85;
 const RADII = { us: [1, 2, 3, 5, 10, 15, 20, 30, 40, 60], metric: [2, 3, 5, 10, 15, 25, 35, 50, 65, 100] };
 const PRESETS = {
   us: [[0, 'On the dirt'], [5, 'Handheld'], [30, 'Mast'], [100, 'Tower']],
@@ -43,7 +44,7 @@ const state = {
   freq: 146.52, // MHz, national 2 m simplex calling frequency
   units: 'us',
   shade: 'dark',
-  opacity: 0.4,
+  opacity: 0.3,
   target: 'a', // which station a map click places in dual mode
 };
 
@@ -428,6 +429,7 @@ function renderOverlay() {
   // Pass 2: paint. Shading uses the strength slider; the two-station overlap is always bold.
   const shadeA = Math.round(state.opacity * 255);
   const bothA = Math.round(BOTH_ALPHA * 255);
+  const edgeA = Math.round(BOTH_EDGE_ALPHA * 255);
   const put = (o, c, a) => { d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = a; };
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -438,7 +440,7 @@ function renderOverlay() {
       else if (c === 4 && B) {
         const edge = x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
           cls[j - 1] !== 4 || cls[j + 1] !== 4 || cls[j - w] !== 4 || cls[j + w] !== 4;
-        if (edge) put(o, BOTH_EDGE, 255); else put(o, BOTH, bothA);
+        if (edge) put(o, BOTH_EDGE, edgeA); else put(o, BOTH, bothA);
       }
     }
   }
