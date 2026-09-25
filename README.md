@@ -8,7 +8,7 @@ in line of sight is left as-is.
 
 ## Features
 
-- **Find a location** by place name or address, `lat, lon`, or Maidenhead grid square (e.g. `DM79lr`), or use your device's location.
+- **Find a location** by street address (apartment numbers and typos are OK), place name, `lat, lon`, or Maidenhead grid square (e.g. `DM79lr`), or use your device's location.
 - **Click anywhere** on the map to move the station there and redraw. You can also drag the marker.
 - **Place names** in the sidebar: the street address you searched for, or the neighborhood and city of a point you clicked.
 - **Antenna height** for your station and for the radio you want to reach, from on-the-ground to tower height, with presets (handheld, mast, tower).
@@ -43,4 +43,4 @@ Then open http://localhost:8123. There is no build step.
 ## Credits
 
 Imagery © Esri, Maxar, Earthstar Geographics · USGS The National Map · © OpenStreetMap contributors ·
-OpenTopoMap (CC-BY-SA) · Elevation: AWS Terrain Tiles · Geocoding: Nominatim / Photon · Map: Leaflet.
+OpenTopoMap (CC-BY-SA) · Elevation: AWS Terrain Tiles · Geocoding: Esri World Geocoder, Nominatim, Photon · Map: Leaflet.

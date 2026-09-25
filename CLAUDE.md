@@ -53,7 +53,7 @@ Static site: plain HTML/CSS/ES modules, no bundler, no npm. Leaflet 1.9.4 from c
 | `js/terrain.js` | Fetches and decodes elevation tiles into a `Float32Array` grid (LRU tile cache). |
 | `js/viewshed.js` | R2 radial-sweep viewshed with Earth curvature/refraction. |
 | `js/profile.js` | A→B path profile: terrain + Earth bulge, LOS line, first Fresnel zone, verdict, canvas chart. |
-| `js/geo.js` | Web Mercator math, distance/bearing, Maidenhead, lat/lon parsing, geocoding. |
+| `js/geo.js` | Web Mercator math, distance/bearing, Maidenhead, lat/lon parsing, multi-geocoder search, reverse geocoding. |
 
 **Recompute pipeline** (`recompute()` in app.js):
 stations + radius → `chooseZoom()` picks the highest DEM zoom (≤14) where the union of the
@@ -93,7 +93,9 @@ localStorage keeps only the chosen base layer and label toggles (wrapped in try/
 | Topo (US) | USGS Topo | `basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}` | Public domain. |
 | Street | OpenStreetMap | `tile.openstreetmap.org/{z}/{x}/{y}.png` | Light use only per OSM tile policy. |
 | Labels overlays | Esri Reference (Boundaries & Places, Transportation) | `…/Reference/World_Boundaries_and_Places/…` | Drawn in a `labels` pane above the shading. |
-| Geocoding | Nominatim (OSM), with Photon (komoot) as fallback | `nominatim.openstreetmap.org/search?format=jsonv2` | Nominatim limit is 1 request/sec, and it needs a Referer (browsers send one; bare curl gets 403). |
+| Geocoding: addresses | Esri World Geocoder | `geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&SingleLine=` | No key needed for search (results not stored). CORS OK. Rooftop US addresses, typo-tolerant. Weak on landmarks ("pikes peak" → villages). |
+| Geocoding: places, reverse | Nominatim (OSM), Photon (komoot) as last fallback | `nominatim.openstreetmap.org/search?format=jsonv2` | Nominatim: 1 request/sec (shared queue in geo.js), needs a Referer (browsers send one; bare curl gets 403). Poor US house-number coverage. |
+| (not used) | US Census geocoder | `geocoding.geo.census.gov/geocoder/locations/onelineaddress` | Excellent US addresses, but **no CORS**. Would need a proxy (e.g. a Cloudflare Worker) if Esri ever stops working anonymously. |
 
 The display map and the elevation data are separate on purpose: the user sees imagery, and the
 math uses the DEM.
@@ -126,6 +128,20 @@ math uses the DEM.
   `navigator.clipboard.writeText`, falling back to `execCommand('copy')`. Confirmation: the
   Copy button turns green ("Copied ✓"), a green banner drops down at the top, and a ring
   ripples at the spot. On failure, a red banner shows the text to copy by hand.
+- **Search** (`searchPlaces()` in geo.js). The owner reported known-good addresses returning
+  "not found": Nominatim alone misses many US house numbers and chokes on unit numbers. The
+  pipeline now picks by query type:
+  - Address-like (starts with a house number, `looksLikeAddress`): Esri → Nominatim → both again
+    with `cleanAddress()` (drops Apt/Unit/Suite/#, ZIP+4) → Photon. Still no exact house match →
+    the street alone (Esri) with a "house number wasn't found" note → any loose match.
+  - Everything else (landmarks, towns): Nominatim → Esri → Photon.
+  - Results near the map center are preferred when zoomed in (zoom ≥ 7).
+  - Exact matches far apart (e.g. 1600 Pennsylvania Ave NW vs SE) → "more than one address
+    matches" note.
+  - Other matches appear in a list under the search box.
+  - Search messages (errors, warnings, "Searching…", location errors) show **directly under the
+    search box** (`searchMsg()`), not in the status line at the bottom. The owner couldn't see
+    errors that needed scrolling.
 - **Station place labels** (sidebar, above the coordinates). A searched place shows its
   address from the geocoder (`searchLabel()` in geo.js). A street address shows as
   `1437 Bannock Street, Denver, CO 80202`, and other places as name + city/county + state.

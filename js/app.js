@@ -4,7 +4,7 @@
 
 import {
   lonToX, latToY, xToLon, yToLat, metersPerPixel, distanceM, bearingDeg,
-  compassPoint, toMaidenhead, fromMaidenhead, parseLatLon, geocode, reverseGeocode,
+  compassPoint, toMaidenhead, fromMaidenhead, parseLatLon, searchPlaces, reverseGeocode,
 } from './geo.js';
 import { loadElevationGrid } from './terrain.js';
 import { computeViewshed, VISIBLE } from './viewshed.js';
@@ -741,6 +741,14 @@ function renderLegend() {
 // ---------- UI wiring ----------
 function $(sel) { return document.querySelector(sel); }
 
+// Message right under the search box (errors must be seen without scrolling). Empty hides it.
+function searchMsg(html, kind = 'info') {
+  const el = $('#searchMsg');
+  el.hidden = !html;
+  el.className = `search-msg ${kind}`;
+  el.innerHTML = html;
+}
+
 function setStatus(html, isError = false) {
   const el = $('#status');
   el.innerHTML = html;
@@ -894,40 +902,57 @@ function wireControls() {
     const q = $('#searchInput').value.trim();
     if (!q) return;
     const key = state.mode === 'dual' ? state.target : 'a';
-    const direct = parseLatLon(q) || fromMaidenhead(q);
     const list = $('#searchResults');
     list.hidden = true;
-    if (direct) { placeStation(key, direct.lat, direct.lon, { fit: true }); return; }
-    setStatus('Searching…');
+    const direct = parseLatLon(q) || fromMaidenhead(q);
+    if (direct) { searchMsg(''); placeStation(key, direct.lat, direct.lon, { fit: true }); return; }
+
+    // Prefer matches near what the user is looking at, once they've zoomed in to a region.
+    const c = map.getCenter().wrap();
+    const near = map.getZoom() >= 7 ? { lat: c.lat, lon: c.lng } : null;
+    const btn = $('#searchForm button[type=submit]');
+    btn.disabled = true;
+    searchMsg('Searching…', 'info');
     try {
-      const hits = await geocode(q);
-      if (!hits.length) { setStatus(`No places found for “${escapeHtml(q)}”.`, true); return; }
-      placeStation(key, hits[0].lat, hits[0].lon, { fit: true, label: hits[0].label });
-      if (hits.length > 1) {
-        list.innerHTML = hits.map((h, i) => `<li><button type="button" data-i="${i}">${escapeHtml(h.name)}</button></li>`).join('');
+      const { results, note } = await searchPlaces(q, { near });
+      if (!results.length) {
+        searchMsg(`<strong>No match for “${escapeHtml(q)}”.</strong> Check the spelling, add the city and state (e.g. “123 Main St, Golden, CO”), or click the map instead.`, 'error');
+        return;
+      }
+      const pick = (h) => placeStation(key, h.lat, h.lon, { fit: true, label: h.label });
+      pick(results[0]);
+      searchMsg(note ? escapeHtml(note) : '', 'warn');
+      if (results.length > 1) {
+        list.innerHTML =
+          `<li class="results-head">Not the right place? Other matches:</li>` +
+          results.map((h, i) => `<li><button type="button" data-i="${i}" class="${i === 0 ? 'on' : ''}">${escapeHtml(h.label)}<span>${escapeHtml(h.name)}</span></button></li>`).join('');
         list.hidden = false;
         list.onclick = (ev) => {
           const b = ev.target.closest('button');
           if (!b) return;
-          const h = hits[+b.dataset.i];
-          placeStation(key, h.lat, h.lon, { fit: true, label: h.label });
-          list.hidden = true;
+          pick(results[+b.dataset.i]);
+          for (const o of list.querySelectorAll('button')) o.classList.toggle('on', o === b);
+          searchMsg('');
         };
       }
     } catch (err) {
-      setStatus(`Search failed: ${escapeHtml(err.message)}`, true);
+      searchMsg(`<strong>Search failed.</strong> ${escapeHtml(err.message)}`, 'error');
+    } finally {
+      btn.disabled = false;
     }
   });
+  $('#searchInput').addEventListener('input', () => { if ($('#searchMsg').classList.contains('error')) searchMsg(''); });
 
   $('#locateBtn').addEventListener('click', () => {
-    if (!navigator.geolocation) { setStatus('This browser cannot share its location.', true); return; }
-    setStatus('Finding your location…');
+    if (!navigator.geolocation) { searchMsg('This browser can’t share its location.', 'error'); return; }
+    searchMsg('Finding your location…', 'info');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const key = state.mode === 'dual' ? state.target : 'a';
+        searchMsg('');
         placeStation(key, pos.coords.latitude, pos.coords.longitude, { fit: true });
       },
-      (err) => setStatus(`Location unavailable: ${escapeHtml(err.message)}`, true),
+      (err) => searchMsg(`<strong>Location unavailable.</strong> ${escapeHtml(err.message)}. Check that location access is allowed for this site.`, 'error'),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
     );
   });

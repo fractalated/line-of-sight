@@ -128,11 +128,12 @@ function join(parts) {
 }
 
 // Label for a searched place: the street address when there is one, else the place name.
-function searchLabel(name, a) {
+// preferName: the user searched by name (e.g. "Red Rocks Amphitheatre"), so show the name.
+function searchLabel(name, a, preferName = false) {
   const city = pick(a, CITY_KEYS);
   const locality = city || a.county;
   const st = region(a);
-  if (a.house_number && a.road) {
+  if (a.house_number && a.road && !(preferName && name)) {
     return join([`${a.house_number} ${a.road}`, locality, [st, a.postcode].filter(Boolean).join(' ')]);
   }
   if (a.road && !name) return join([a.road, locality, st]);
@@ -148,33 +149,159 @@ function areaLabel(a) {
   return place ? join([place, region(a)]) : join([a.state, a.country]);
 }
 
-// Returns up to 5 matches as [{ name, label, lat, lon }].
-export async function geocode(q) {
-  const enc = encodeURIComponent(q);
-  try {
-    const j = await nominatim(`search?format=jsonv2&addressdetails=1&limit=5&q=${enc}`);
-    return j.map((x) => ({
+// ---------- Place search ----------
+// Each provider returns [{ name, label, lat, lon, exact, source }], where `exact` means the
+// match is a specific street address (not just the street, ZIP or town).
+
+const withTimeout = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+
+// Esri World Geocoder: strongest on street addresses (rooftop points, typo-tolerant).
+// Anonymous use for search (results not stored in a database) needs no API key.
+const ESRI_GEOCODE = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates';
+const ESRI_FIELDS = 'Addr_type,StAddr,City,Subregion,Region,RegionAbbr,Postal,PlaceName,CntryName';
+const ESRI_EXACT = new Set(['PointAddress', 'Subaddress', 'StreetAddress', 'StreetAddressExt', 'StreetInt']);
+
+async function esriSearch(q, near) {
+  let url = `${ESRI_GEOCODE}?f=json&maxLocations=5&outFields=${ESRI_FIELDS}&SingleLine=${encodeURIComponent(q)}`;
+  if (near) url += `&location=${near.lon.toFixed(4)},${near.lat.toFixed(4)}`;
+  const r = await fetch(url, { signal: withTimeout(10000) });
+  if (!r.ok) throw new Error(`Esri HTTP ${r.status}`);
+  const j = await r.json();
+  if (j.error) throw new Error(`Esri: ${j.error.message}`);
+  return (j.candidates || []).filter((c) => c.score >= 80).map((c) => {
+    const a = c.attributes;
+    const exact = ESRI_EXACT.has(a.Addr_type) && !!a.StAddr;
+    const locality = a.City || a.Subregion;
+    const label = exact
+      ? join([a.StAddr, locality, [a.RegionAbbr, a.Postal].filter(Boolean).join(' ')])
+      : join([a.PlaceName || a.StAddr, locality, a.RegionAbbr || a.Region || a.CntryName]);
+    return { name: c.address, label: label || c.address, lat: c.location.y, lon: c.location.x, exact, source: 'Esri' };
+  });
+}
+
+// Nominatim (OpenStreetMap): strongest on landmarks, peaks, parks and towns.
+async function nominatimSearch(q, near) {
+  let path = `search?format=jsonv2&addressdetails=1&limit=5&q=${encodeURIComponent(q)}`;
+  if (near) path += `&viewbox=${near.lon - 1},${near.lat + 1},${near.lon + 1},${near.lat - 1}`; // bias, not a limit
+  const j = await nominatim(path);
+  const byName = !looksLikeAddress(q);
+  return j.map((x) => {
+    const a = x.address || {};
+    return {
       name: x.display_name,
-      label: searchLabel(x.name, x.address || {}) || x.display_name,
+      label: searchLabel(x.name, a, byName) || x.display_name,
       lat: +x.lat,
       lon: +x.lon,
-    }));
-  } catch (err) {
-    console.warn('Nominatim failed, trying Photon', err);
-    const r = await fetch(`https://photon.komoot.io/api/?limit=5&q=${enc}`);
-    if (!r.ok) throw new Error(`Photon HTTP ${r.status}`);
-    const j = await r.json();
-    return j.features.map((f) => {
-      const p = f.properties;
-      const a = { house_number: p.housenumber, road: p.street, city: p.city, county: p.county, state: p.state, postcode: p.postcode };
-      return {
-        name: [p.name, p.city, p.state, p.country].filter(Boolean).join(', '),
-        label: searchLabel(p.name, a),
-        lat: f.geometry.coordinates[1],
-        lon: f.geometry.coordinates[0],
-      };
-    });
+      exact: !!a.house_number,
+      source: 'OpenStreetMap',
+    };
+  });
+}
+
+// Photon (komoot, also OpenStreetMap data): last-resort fallback.
+async function photonSearch(q, near) {
+  let url = `https://photon.komoot.io/api/?limit=5&q=${encodeURIComponent(q)}`;
+  if (near) url += `&lat=${near.lat.toFixed(4)}&lon=${near.lon.toFixed(4)}`;
+  const r = await fetch(url, { signal: withTimeout(10000) });
+  if (!r.ok) throw new Error(`Photon HTTP ${r.status}`);
+  const j = await r.json();
+  return j.features.map((f) => {
+    const p = f.properties;
+    const a = { house_number: p.housenumber, road: p.street, city: p.city, county: p.county, state: p.state, postcode: p.postcode };
+    return {
+      name: [p.housenumber && p.street ? `${p.housenumber} ${p.street}` : p.name, p.city, p.state, p.country].filter(Boolean).join(', '),
+      label: searchLabel(p.name, a),
+      lat: f.geometry.coordinates[1],
+      lon: f.geometry.coordinates[0],
+      exact: !!p.housenumber,
+      source: 'Photon',
+    };
+  });
+}
+
+// "4500 W 38th Ave", "12-B Main St", "N123 County Rd K" (Wisconsin style).
+const looksLikeAddress = (q) => /^\s*([NSEW]?\d+[A-Z]?(-\d+[A-Z]?)?)\s+\S/i.test(q);
+
+// Remove what geocoders commonly choke on: unit numbers and ZIP+4 extensions.
+export function cleanAddress(q) {
+  return q
+    .replace(/\b(apt|apartment|unit|ste|suite|lot|bldg|building|fl|floor|rm|room|spc|space|trlr|dept)\b\.?\s*#?\s*[\w-]+/gi, '')
+    .replace(/#\s*[\w-]+/g, '')
+    .replace(/\b(\d{5})-\d{4}\b/g, '$1')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*(,\s*)+/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s,]+|[\s,]+$/g, '');
+}
+
+const streetOnly = (q) => q.replace(/^\s*[NSEW]?\d+[A-Z]?(-\d+[A-Z]?)?\s+/i, '');
+
+function dedupe(list) {
+  const out = [];
+  for (const r of list) {
+    if (!out.some((o) => Math.abs(o.lat - r.lat) < 0.0005 && Math.abs(o.lon - r.lon) < 0.0005)) out.push(r);
   }
+  return out.slice(0, 6);
+}
+
+/**
+ * Search with several geocoders and query variants.
+ * @param near  optional { lat, lon } to prefer nearby matches (e.g. the map view)
+ * @returns { results, note }  note explains an approximate match; results may be empty.
+ * Throws only if every service failed to respond.
+ */
+export async function searchPlaces(q, { near = null } = {}) {
+  const cleaned = cleanAddress(q);
+  const isAddr = looksLikeAddress(q) || looksLikeAddress(cleaned);
+  const tries = isAddr
+    ? [[esriSearch, q], [nominatimSearch, q], [esriSearch, cleaned], [nominatimSearch, cleaned], [photonSearch, cleaned]]
+    : [[nominatimSearch, q], [esriSearch, q], [photonSearch, q]];
+
+  const seen = new Set();
+  const loose = []; // non-exact matches collected along the way
+  let answered = false;
+  for (const [fn, text] of tries) {
+    const key = `${fn.name}|${text}`;
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    let hits;
+    try {
+      hits = await fn(text, near);
+      answered = true;
+    } catch (err) {
+      console.warn('Geocoder failed', fn.name, err);
+      continue;
+    }
+    if (!hits.length) continue;
+    if (!isAddr) return { results: dedupe(hits), note: '' };
+    const exact = hits.filter((h) => h.exact);
+    if (exact.length) {
+      // e.g. "1600 Pennsylvania Ave" without NW/SE matches two real addresses far apart.
+      const ambiguous = exact.length > 1 && distanceM(exact[0], exact[1]) > 1000;
+      let note = text !== q ? `Matched after ignoring the unit/apartment number: ${cleaned}` : '';
+      if (ambiguous) note = 'More than one address matches. Check that the marker is on the right one, or pick another below.';
+      return { results: dedupe([...exact, ...hits.filter((h) => !h.exact)]), note };
+    }
+    loose.push(...hits);
+  }
+
+  // No exact house match anywhere: fall back to the street itself, then whatever was close.
+  if (isAddr) {
+    try {
+      const street = await esriSearch(streetOnly(cleaned), near);
+      answered = true;
+      if (street.length) {
+        return { results: dedupe([...street, ...loose]), note: 'That house number wasn’t found, so this is the street or area. Drag the marker to the exact spot.' };
+      }
+    } catch (err) {
+      console.warn('Geocoder failed', err);
+    }
+    if (loose.length) {
+      return { results: dedupe(loose), note: 'That exact address wasn’t found, so this is the closest match. Check the marker.' };
+    }
+  }
+  if (!answered) throw new Error('The search services didn’t respond. Check your internet connection and try again.');
+  return { results: [], note: '' };
 }
 
 // Neighborhood + city for a point, e.g. "Civic Center, Denver"; null if unknown.

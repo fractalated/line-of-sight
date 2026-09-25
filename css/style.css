@@ -155,6 +155,22 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 13px;
 }
 .results li button:hover, .results li button:focus-visible { background: var(--border); }
+.results li button.on { box-shadow: inset 3px 0 0 var(--accent); }
+.results li button span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+.results .results-head { color: var(--muted); font-size: 12px; padding: 4px 8px 2px; }
+
+.search-msg {
+  margin-top: -4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  border: 1px solid transparent;
+}
+.search-msg.info { color: var(--muted); padding: 2px 2px; }
+.search-msg.warn { background: rgba(201, 138, 0, 0.14); border-color: rgba(201, 138, 0, 0.5); }
+.search-msg.error { background: rgba(210, 59, 59, 0.14); border-color: var(--bad); }
+.search-msg.error strong { color: var(--bad); }
 
 .seg {
   display: flex;
