@@ -631,38 +631,15 @@ function renderOverlay() {
     if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
   });
 
-  // Small shares get a decimal (or "<0.1%") so a real but small overlap never reads as 0%.
-  const pct = (n) => {
-    if (!n) return '0%';
-    const p = (100 * n) / Math.max(1, counts.area);
-    if (p < 0.1) return '<0.1%';
-    return `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
-  };
-  // Ground area: one grid pixel covers mpp² square meters (grid shares one zoom level).
-  const pxArea = results[0].mpp ** 2;
-  const area = (n) => {
-    const m2 = n * pxArea;
-    if (state.units === 'us') {
-      const mi2 = m2 / (MI * MI);
-      return `${mi2 < 10 ? mi2.toFixed(1) : Math.round(mi2).toLocaleString()} sq mi`;
-    }
-    const km2 = m2 / 1e6;
-    return `${km2 < 10 ? km2.toFixed(1) : Math.round(km2).toLocaleString()} km²`;
-  };
-  const within = `within ${fmt.dist(state.radius)}`;
-  let msg;
-  if (!B) {
-    msg = `<strong>${pct(counts.both)}</strong> of the area ${within} is in line of sight (${area(counts.both)}).`;
-    if (counts.both / Math.max(1, counts.area) < 0.03) {
-      msg += ' <span class="muted">Tip: on a broad hilltop, drag the marker toward the edge that faces the area you want to reach, or raise the antenna.</span>';
-    }
-  } else {
-    const share = (n) => (n ? `${area(n)} (${pct(n)})` : 'none');
-    msg = `<span class="both-text">Seen by both: <strong>${share(counts.both)}</strong></span>`
-      + ` · A only ${share(counts.a)} · B only ${share(counts.b)}`
-      + ` <span class="muted">Percentages are of all the ground within ${fmt.dist(state.radius)} of A or B.</span>`;
+  // The legend lists these next to each color, straight from the same pixel classes that
+  // were just painted, so the numbers and the map always agree.
+  lastStats = { dual: !!B, counts, pxArea: results[0].mpp ** 2 };
+  renderLegend();
+  let msg = '';
+  if (!B && counts.both / Math.max(1, counts.area) < 0.03) {
+    msg = '<span class="muted">Tip: on a broad hilltop, drag the marker toward the edge that faces the area you want to reach, or raise the antenna.</span>';
   }
-  if (g.failed) msg += ` <span class="warn-text">${g.failed} terrain tile(s) failed to load; results there are unreliable.</span>`;
+  if (g.failed) msg += `${msg ? ' ' : ''}<span class="warn-text">${g.failed} terrain tile(s) failed to load; results there are unreliable.</span>`;
   setStatus(msg);
 }
 
@@ -740,25 +717,49 @@ function updateInfo() {
   }
 }
 
+let lastStats = null; // { dual, counts: { area, both, a, b }, pxArea } from the last paint
+
+// Area of n grid pixels, one decimal (so the rows visibly add up to the total).
+function fmtArea(n, pxArea) {
+  const m2 = n * pxArea;
+  const v = state.units === 'us' ? m2 / (MI * MI) : m2 / 1e6;
+  const unit = state.units === 'us' ? 'sq mi' : 'km²';
+  return `${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${unit}`;
+}
+
+// Share of the analyzed area; small shares keep a decimal so a real overlap never reads 0%.
+function fmtPct(n, total) {
+  if (!n) return '0%';
+  const p = (100 * n) / Math.max(1, total);
+  if (p < 0.1) return '<0.1%';
+  return `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
+}
+
 function renderLegend() {
   const sh = SHADES[state.shade];
-  const sw = (c, a = state.opacity) => `<span class="sw" style="background: rgba(${c[0]},${c[1]},${c[2]},${a})"></span>`;
+  const sw = (c, a = state.opacity, cls = '') => `<span class="sw ${cls}" style="background: rgba(${c[0]},${c[1]},${c[2]},${a})"></span>`;
   const clear = '<span class="sw"></span>';
   const ring = '<span class="sw ring"></span>';
-  const el = $('#legend');
-  if (state.mode === 'dual') {
-    el.innerHTML = `
-      <div>${sw(BOTH, BOTH_ALPHA).replace('class="sw"', 'class="sw both"')} <strong>Seen by both A and B</strong></div>
-      <div>${sw(ONLY_A)} Seen by A only</div>
-      <div>${sw(ONLY_B)} Seen by B only</div>
-      <div>${sw(sh)} Seen by neither</div>
-      <div>${ring} Analysis range</div>`;
+  const dual = state.mode === 'dual';
+  const st = lastStats && lastStats.dual === dual && last ? lastStats : null;
+  const cell = (n) => (st ? `<span class="lg-area">${fmtArea(n, st.pxArea)}</span><span class="lg-pct">${fmtPct(n, st.counts.area)}</span>` : '<span></span><span></span>');
+  const row = (swatch, label, n, cls = '') => `<div class="lg-row ${cls}">${swatch}<span>${label}</span>${n == null ? '<span></span><span></span>' : cell(n)}</div>`;
+  const c = st ? st.counts : { area: 0, both: 0, a: 0, b: 0 };
+  let rows;
+  if (dual) {
+    rows = row(sw(BOTH, BOTH_ALPHA, 'both'), '<strong>Seen by both A and B</strong>', c.both, 'lg-both')
+      + row(sw(ONLY_A), 'Seen by A only', c.a)
+      + row(sw(ONLY_B), 'Seen by B only', c.b)
+      + row(sw(sh), 'Seen by neither', c.area - c.both - c.a - c.b);
   } else {
-    el.innerHTML = `
-      <div>${clear} Unshaded: in line of sight</div>
-      <div>${sw(sh)} Not in line of sight</div>
-      <div>${ring} Analysis range</div>`;
+    rows = row(clear, 'In line of sight (unshaded)', c.both)
+      + row(sw(sh), 'Not in line of sight', c.area - c.both);
   }
+  const total = st
+    ? `<div class="lg-row lg-total"><span></span><span>Total analyzed</span>${cell(c.area)}</div>
+       <div class="lg-note">Everything within ${fmt.dist(state.radius)} of ${dual ? 'A or B' : 'your station'}. The rows add up to the total.</div>`
+    : '';
+  $('#legend').innerHTML = rows + total + `<div class="lg-row lg-ring">${ring}<span>Analysis range</span><span></span><span></span></div>`;
 }
 
 // ---------- UI wiring ----------

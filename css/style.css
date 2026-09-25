@@ -250,10 +250,24 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .advanced[open] { display: flex; flex-direction: column; gap: 8px; }
 
 .status { font-size: 13px; min-height: 1.4em; }
+.status:empty { display: none; }
 .status.error { color: var(--bad); }
 
-.legend { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
-.legend div { display: flex; align-items: center; gap: 8px; }
+.legend {
+  display: grid;
+  grid-template-columns: 16px 1fr auto auto;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.lg-row { display: contents; }
+.lg-area, .lg-pct { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lg-pct { color: var(--muted); min-width: 3.2em; }
+.lg-both .lg-area { color: #ff1493; font-weight: 700; }
+.lg-total > * { border-top: 1px solid var(--border); padding-top: 4px; font-weight: 600; }
+.lg-note { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; margin-top: -2px; }
+.lg-ring > .sw { margin-top: 4px; }
 .sw {
   width: 16px;
   height: 12px;

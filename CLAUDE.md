@@ -154,11 +154,15 @@ math uses the DEM.
   results for a station that has since moved are dropped. All Nominatim calls share a 1.1 s
   queue (usage policy). Labels are saved in the hash as `la`/`lb`; a link without them gets
   looked up on load.
-- **Coverage readout** (status line): areas in sq mi / km² (pixel count × mpp²) plus
-  percentages. Percentages under 10% get one decimal ("<0.1%" when tiny, "none" when zero).
-  Whole-number rounding once showed "0%" next to visible pink overlap. Two-station percentages
-  are of all ground within range of A or B. The low-coverage hilltop tip shows only in
-  one-station mode.
+- **Coverage numbers live in the legend**, one row per color: area (sq mi / km², one
+  decimal) and share of the total, then a "Total analyzed" row. `renderOverlay()` fills
+  `lastStats` from the same per-pixel classes it paints, so numbers and map can't disagree. The
+  owner doubted the math when the sidebar said 0% beside visible pink. It was whole-number
+  rounding of a 0.1% overlap, and the numbers were in a sentence away from the colors. Verified
+  on 2026-09-25: pixel counts read back from the rendered overlay matched the legend, and the
+  total matched two-circle geometry within 0.2%. Shares under 10% keep one decimal ("<0.1%",
+  "0%" only when truly zero). The status line now holds only tips and warnings (hidden when
+  empty). The hilltop tip shows only in one-station mode.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is
