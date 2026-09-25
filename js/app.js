@@ -15,7 +15,7 @@ const FT = 0.3048, MI = 1609.344, KM = 1000;
 const MAX_GRID = 2048; // max analysis size in DEM pixels
 const MAX_Z = 14, MIN_Z = 4;
 
-const SHADES = { dark: [8, 10, 28], red: [215, 28, 28], purple: [115, 30, 170] };
+const SHADES = { dark: [20, 24, 40], red: [215, 28, 28], purple: [115, 30, 170] };
 const ONLY_A = [43, 120, 255];
 const ONLY_B = [255, 150, 20];
 // Two-station overlap: hot pink with a white outline, drawn at a fixed strength so it
@@ -43,7 +43,7 @@ const state = {
   freq: 146.52, // MHz, national 2 m simplex calling frequency
   units: 'us',
   shade: 'dark',
-  opacity: 0.55,
+  opacity: 0.4,
   target: 'a', // which station a map click places in dual mode
 };
 
@@ -156,6 +156,39 @@ L.control.layers(baseLayers, {
   'Roads': roadLabels,
   'Line-of-sight shading': losLayer,
 }, { position: 'topright' }).addTo(map);
+
+// On-map button to show/hide the shading (stays reachable when the panel is collapsed).
+// Kept in sync with the layers menu, which has its own "Line-of-sight shading" checkbox.
+const ShadingToggle = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const btn = L.DomUtil.create('button', 'leaflet-bar shading-toggle');
+    btn.type = 'button';
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path class="slash" d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg><span></span>`;
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', () => {
+      if (map.hasLayer(losLayer)) map.removeLayer(losLayer);
+      else map.addLayer(losLayer);
+    });
+    this._btn = btn;
+    this.update();
+    return btn;
+  },
+  update() {
+    const on = map.hasLayer(losLayer);
+    this._btn.classList.toggle('off', !on);
+    this._btn.setAttribute('aria-pressed', String(on));
+    this._btn.title = on ? 'Hide line-of-sight shading' : 'Show line-of-sight shading';
+    this._btn.querySelector('span').textContent = on ? 'Shading on' : 'Shading off';
+  },
+});
+const shadingToggle = new ShadingToggle().addTo(map);
+map.on('layeradd layerremove', (e) => { if (e.layer === losLayer) shadingToggle.update(); });
 
 map.on('baselayerchange', (e) => store.set('los.base', e.name));
 map.on('overlayadd overlayremove', (e) => {

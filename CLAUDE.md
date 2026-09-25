@@ -103,6 +103,11 @@ math uses the DEM.
   sea level (Death Valley, Salton Sea) is flattened to 0.
 - Pure geometric line of sight: no diffraction, clutter, or signal-strength model. VHF often
   reaches a bit past geometric LOS through diffraction; the UI notes that clutter isn't modeled.
+- Shading is deliberately light, so the map shows through (owner found it too dark): default
+  strength 0.4, and the "dark" shade is a slate `[20, 24, 40]` rather than near-black.
+- A "Shading on/off" button on the map (top right, `ShadingToggle` control) hides or shows
+  `losLayer`, including the pink overlap. It stays in sync with the layers-menu checkbox. It is
+  not persisted: shading is always on at page load.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is

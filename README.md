@@ -14,6 +14,7 @@ in line of sight is left as-is.
 - **Two-station mode**: place A and B to see where both have coverage (**hot pink**), A only (blue), B only (orange), or neither (shaded). You also get an A↔B terrain profile with the Fresnel zone and a plain-language verdict.
 - **Map choices**: Esri satellite, USGS satellite, OpenTopoMap, USGS topo, OpenStreetMap, with optional place-name and road labels.
 - Earth curvature with radio refraction (4/3 Earth), adjustable range, feet/miles or meters/km.
+- **Shading on/off** button on the map to compare against the plain imagery. Shading strength and color are under More settings.
 - Shareable links: the URL holds your stations and settings.
 - Works on desktop and phone browsers. No install, no account.
 
