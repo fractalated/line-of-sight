@@ -64,7 +64,11 @@ bounding square, stopped at the radius. Track the max terrain slope `(e − drop
 Distances use meters-per-pixel at the observer's latitude (fine for ≤100 km).
 
 **Two-station mode**: both viewsheds use the same "other radio" target height. Colors:
-unshaded = both see it, blue = A only, orange = B only, shade color = neither. The A↔B
+**hot pink (#FF1493) with a white outline = both see it** (owner asked for the overlap to be
+very noticeable), blue = A only, orange = B only, shade color = neither. The pink is drawn at a
+fixed 85% (`BOTH_ALPHA`) whatever the shade-strength slider says. That means alpha is baked
+into the overlay pixels (the image overlay itself is at opacity 1), so moving the slider
+repaints the overlay. Single-station mode still leaves visible areas unshaded. The A↔B
 profile gives the direct simplex verdict: blocked / marginal (<60% of Fresnel zone 1 clear) / clear.
 
 **State** lives in the URL hash (shareable links): `m` mode (1/2), `a`,`b` lat,lon, `ha`,`hb`,`ht`

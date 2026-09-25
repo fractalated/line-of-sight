@@ -11,7 +11,7 @@ in line of sight is left as-is.
 - **Find a location** by place name or address, `lat, lon`, or Maidenhead grid square (e.g. `DM79lr`), or use your device's location.
 - **Click anywhere** on the map to move the station there and redraw. You can also drag the marker.
 - **Antenna height** for your station and for the radio you want to reach, from on-the-ground to tower height, with presets (handheld, mast, tower).
-- **Two-station mode**: place A and B to see where both have coverage (unshaded), A only (blue), B only (orange), or neither (shaded). You also get an A↔B terrain profile with the Fresnel zone and a plain-language verdict.
+- **Two-station mode**: place A and B to see where both have coverage (**hot pink**), A only (blue), B only (orange), or neither (shaded). You also get an A↔B terrain profile with the Fresnel zone and a plain-language verdict.
 - **Map choices**: Esri satellite, USGS satellite, OpenTopoMap, USGS topo, OpenStreetMap, with optional place-name and road labels.
 - Earth curvature with radio refraction (4/3 Earth), adjustable range, feet/miles or meters/km.
 - Shareable links: the URL holds your stations and settings.

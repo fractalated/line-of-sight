@@ -244,6 +244,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   flex: 0 0 auto;
 }
 .sw.ring { border: 2px dashed var(--muted); background: none; }
+.sw.both { border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.both-text { color: #ff1493; }
 
 .profile { display: flex; flex-direction: column; gap: 6px; }
 .profile-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }

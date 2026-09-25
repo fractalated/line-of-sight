@@ -18,6 +18,11 @@ const MAX_Z = 14, MIN_Z = 4;
 const SHADES = { dark: [8, 10, 28], red: [215, 28, 28], purple: [115, 30, 170] };
 const ONLY_A = [43, 120, 255];
 const ONLY_B = [255, 150, 20];
+// Two-station overlap: hot pink with a white outline, drawn at a fixed strength so it
+// stands out no matter how the shade-strength slider is set.
+const BOTH = [255, 20, 147];
+const BOTH_EDGE = [255, 255, 255];
+const BOTH_ALPHA = 0.85;
 const RADII = { us: [1, 2, 3, 5, 10, 15, 20, 30, 40, 60], metric: [2, 3, 5, 10, 15, 25, 35, 50, 65, 100] };
 const PRESETS = {
   us: [[0, 'On the dirt'], [5, 'Handheld'], [30, 'Mast'], [100, 'Tower']],
@@ -364,6 +369,8 @@ function renderOverlay() {
   const A = results[0].vis, B = results[1] ? results[1].vis : null;
   const counts = { area: 0, both: 0, a: 0, b: 0 };
 
+  // Pass 1: classify each pixel. 0 = outside, 1 = hidden, 2 = A only, 3 = B only, 4 = visible/both.
+  const cls = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     const row = (y + cy0) * g.W + cx0;
     for (let x = 0; x < w; x++) {
@@ -372,21 +379,33 @@ function renderOverlay() {
       if (!va && !vb) continue;
       counts.area++;
       const sa = va === VISIBLE, sb = vb === VISIBLE;
-      let c = null;
-      if (!B) {
-        if (sa) counts.both++; else c = shade;
-      } else if (sa && sb) {
-        counts.both++;
-      } else if (sa) {
-        counts.a++; c = ONLY_A;
-      } else if (sb) {
-        counts.b++; c = ONLY_B;
-      } else {
-        c = shade;
-      }
-      if (c) {
-        const o = (y * w + x) * 4;
-        d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+      let c;
+      if (!B) c = sa ? 4 : 1;
+      else if (sa && sb) c = 4;
+      else if (sa) c = 2;
+      else if (sb) c = 3;
+      else c = 1;
+      if (c === 4) counts.both++;
+      else if (c === 2) counts.a++;
+      else if (c === 3) counts.b++;
+      cls[y * w + x] = c;
+    }
+  }
+
+  // Pass 2: paint. Shading uses the strength slider; the two-station overlap is always bold.
+  const shadeA = Math.round(state.opacity * 255);
+  const bothA = Math.round(BOTH_ALPHA * 255);
+  const put = (o, c, a) => { d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = a; };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const j = y * w + x, c = cls[j], o = j * 4;
+      if (c === 1) put(o, shade, shadeA);
+      else if (c === 2) put(o, ONLY_A, shadeA);
+      else if (c === 3) put(o, ONLY_B, shadeA);
+      else if (c === 4 && B) {
+        const edge = x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
+          cls[j - 1] !== 4 || cls[j + 1] !== 4 || cls[j - w] !== 4 || cls[j + w] !== 4;
+        if (edge) put(o, BOTH_EDGE, 255); else put(o, BOTH, bothA);
       }
     }
   }
@@ -403,7 +422,7 @@ function renderOverlay() {
     const old = overlayUrl;
     overlayUrl = url;
     if (!overlay) {
-      overlay = L.imageOverlay(url, bounds, { opacity: state.opacity, interactive: false, className: 'los-overlay' });
+      overlay = L.imageOverlay(url, bounds, { interactive: false, className: 'los-overlay' });
       losLayer.addLayer(overlay);
     } else {
       overlay.setUrl(url);
@@ -416,7 +435,7 @@ function renderOverlay() {
   const within = `within ${fmt.dist(state.radius)}`;
   let msg;
   if (!B) msg = `<strong>${pct(counts.both)}</strong> of the area ${within} is in line of sight.`;
-  else msg = `Seen by both: <strong>${pct(counts.both)}</strong> · A only ${pct(counts.a)} · B only ${pct(counts.b)} (${within} of either).`;
+  else msg = `<span class="both-text">Seen by both: <strong>${pct(counts.both)}</strong></span> · A only ${pct(counts.a)} · B only ${pct(counts.b)} (${within} of either).`;
   if (counts.both / Math.max(1, counts.area) < 0.03) {
     msg += ' <span class="muted">Tip: on a broad hilltop, drag the marker toward the edge that faces the area you want to reach, or raise the antenna.</span>';
   }
@@ -467,13 +486,13 @@ function updateInfo() {
 
 function renderLegend() {
   const sh = SHADES[state.shade];
-  const sw = (c) => `<span class="sw" style="background: rgba(${c[0]},${c[1]},${c[2]},${state.opacity})"></span>`;
+  const sw = (c, a = state.opacity) => `<span class="sw" style="background: rgba(${c[0]},${c[1]},${c[2]},${a})"></span>`;
   const clear = '<span class="sw"></span>';
   const ring = '<span class="sw ring"></span>';
   const el = $('#legend');
   if (state.mode === 'dual') {
     el.innerHTML = `
-      <div>${clear} Unshaded: seen by both A and B</div>
+      <div>${sw(BOTH, BOTH_ALPHA).replace('class="sw"', 'class="sw both"')} <strong>Seen by both A and B</strong></div>
       <div>${sw(ONLY_A)} Seen by A only</div>
       <div>${sw(ONLY_B)} Seen by B only</div>
       <div>${sw(sh)} Seen by neither</div>
@@ -584,6 +603,7 @@ function syncAllControls() {
   $('#opacityIn').value = state.opacity;
 }
 
+let opacityTimer = 0;
 function wireControls() {
   $('#modeSeg').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -619,7 +639,8 @@ function wireControls() {
   });
   $('#opacityIn').addEventListener('input', (e) => {
     state.opacity = +e.target.value;
-    if (overlay) overlay.setOpacity(state.opacity);
+    // Alpha is baked into the overlay pixels so the overlap can stay bold; repaint, throttled.
+    if (!opacityTimer) opacityTimer = setTimeout(() => { opacityTimer = 0; renderOverlay(); }, 40);
     renderLegend();
     writeHash();
   });
