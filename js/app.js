@@ -163,7 +163,7 @@ L.control.layers(baseLayers, {
 const ShadingToggle = L.Control.extend({
   options: { position: 'topright' },
   onAdd() {
-    const btn = L.DomUtil.create('button', 'leaflet-bar shading-toggle');
+    const btn = L.DomUtil.create('button', 'leaflet-bar map-btn shading-toggle');
     btn.type = 'button';
     btn.innerHTML = `
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -190,6 +190,93 @@ const ShadingToggle = L.Control.extend({
 });
 const shadingToggle = new ShadingToggle().addTo(map);
 map.on('layeradd layerremove', (e) => { if (e.layer === losLayer) shadingToggle.update(); });
+
+// Copy-coordinates mode: while on, a map click copies "lat, lon" instead of moving a station.
+// Right-click (long-press on phones) copies at any time.
+let copyMode = false;
+const CopyToggle = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const btn = L.DomUtil.create('button', 'leaflet-bar map-btn copy-toggle');
+    btn.type = 'button';
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 2v5M12 17v5M2 12h5M17 12h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg><span></span>`;
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', () => setCopyMode(!copyMode));
+    this._btn = btn;
+    this.update();
+    return btn;
+  },
+  update() {
+    this._btn.classList.toggle('active', copyMode);
+    this._btn.setAttribute('aria-pressed', String(copyMode));
+    this._btn.title = copyMode
+      ? 'Copy mode is on: click the map to copy a location. Click here or press Esc to stop.'
+      : 'Copy a location\'s latitude, longitude (tip: right-click the map any time)';
+    this._btn.querySelector('span').textContent = copyMode ? 'Click map to copy' : 'Copy lat/long';
+  },
+});
+const copyToggle = new CopyToggle().addTo(map);
+
+function setCopyMode(on) {
+  copyMode = on;
+  map.getContainer().classList.toggle('picking', on);
+  copyToggle.update();
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && copyMode) setCopyMode(false); });
+
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+async function copyCoords(latlng) {
+  const text = `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    ok = legacyCopy(text);
+  }
+  pingAt(latlng, ok);
+  showToast(text, ok);
+}
+
+// Expanding ring at the copied spot, then gone.
+function pingAt(latlng, ok) {
+  const m = L.marker(latlng, {
+    icon: L.divIcon({ className: '', html: `<div class="copy-ping ${ok ? '' : 'fail'}"><span></span></div>`, iconSize: [44, 44], iconAnchor: [22, 22] }),
+    interactive: false,
+    keyboard: false,
+  }).addTo(map);
+  setTimeout(() => m.remove(), 1600);
+}
+
+let toastTimer = null;
+function showToast(text, ok) {
+  const el = $('#toast');
+  el.className = `toast show ${ok ? 'ok' : 'fail'}`;
+  el.innerHTML = ok
+    ? `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+       <div><div class="toast-title">Copied to clipboard</div><div class="toast-coords">${text}</div></div>`
+    : `<div><div class="toast-title">Couldn't copy automatically. Select and copy:</div><div class="toast-coords selectable">${text}</div></div>`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ok ? 2800 : 8000);
+}
+
+map.on('contextmenu', (e) => copyCoords(e.latlng.wrap()));
 
 map.on('baselayerchange', (e) => store.set('los.base', e.name));
 map.on('overlayadd overlayremove', (e) => {
@@ -267,8 +354,14 @@ function panTarget(latlng) {
 
 function viewPadding() {
   const panel = $('#panel');
-  if (window.innerWidth <= 700) return { paddingTopLeft: [20, 20], paddingBottomRight: [20, panel.offsetHeight + 20] };
-  return { paddingTopLeft: [panel.offsetWidth + 30, 20], paddingBottomRight: [20, 20] };
+  const size = map.getSize();
+  // If the panel leaves too little map showing, padding would force fitBounds to max zoom.
+  if (window.innerWidth <= 700) {
+    const bottom = panel.offsetHeight + 20;
+    return size.y - bottom < 150 ? {} : { paddingTopLeft: [20, 20], paddingBottomRight: [20, bottom] };
+  }
+  const left = panel.offsetWidth + 30;
+  return size.x - left < 200 ? {} : { paddingTopLeft: [left, 20], paddingBottomRight: [20, 20] };
 }
 
 function fitStations() {
@@ -281,6 +374,7 @@ function fitStations() {
 
 map.on('click', (e) => {
   const p = e.latlng.wrap();
+  if (copyMode) { copyCoords(p); return; }
   const key = state.mode === 'dual' ? state.target : 'a';
   // Zoomed far out, the analysis circle would be invisible: zoom to it instead of panning.
   const far = map.getZoom() < 9;

@@ -15,6 +15,7 @@ in line of sight is left as-is.
 - **Map choices**: Esri satellite, USGS satellite, OpenTopoMap, USGS topo, OpenStreetMap, with optional place-name and road labels.
 - Earth curvature with radio refraction (4/3 Earth), adjustable range, feet/miles or meters/km.
 - **Shading on/off** button on the map to compare against the plain imagery. Shading strength and color are under More settings.
+- **Copy lat/long**: turn on the map button and click, or just right-click (long-press on a phone). The spot is copied as `latitude, longitude`, with an on-screen confirmation.
 - Shareable links: the URL holds your stations and settings.
 - Works on desktop and phone browsers. No install, no account.
 

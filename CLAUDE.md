@@ -108,6 +108,12 @@ math uses the DEM.
 - A "Shading on/off" button on the map (top right, `ShadingToggle` control) hides or shows
   `losLayer`, including the pink overlap. It stays in sync with the layers-menu checkbox. It is
   not persisted: shading is always on at page load.
+- **Copy lat/long**: a "Copy lat/long" map button turns on copy mode (crosshair cursor). In
+  copy mode a map click copies `lat, lon` (6 decimals, e.g. `39.733140, -105.238287`) instead of
+  moving a station. Esc or the button turns it off. Right-click (long-press on touch) copies at
+  any time. Uses `navigator.clipboard.writeText`, falling back to `execCommand('copy')`.
+  Confirmation: a green banner at the top plus an expanding ring at the spot. If copying fails,
+  a red banner shows the text so it can be selected by hand.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is
