@@ -154,6 +154,11 @@ math uses the DEM.
   results for a station that has since moved are dropped. All Nominatim calls share a 1.1 s
   queue (usage policy). Labels are saved in the hash as `la`/`lb`; a link without them gets
   looked up on load.
+- **Coverage readout** (status line): areas in sq mi / km² (pixel count × mpp²) plus
+  percentages. Percentages under 10% get one decimal ("<0.1%" when tiny, "none" when zero).
+  Whole-number rounding once showed "0%" next to visible pink overlap. Two-station percentages
+  are of all ground within range of A or B. The low-coverage hilltop tip shows only in
+  one-station mode.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is

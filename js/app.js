@@ -631,13 +631,36 @@ function renderOverlay() {
     if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
   });
 
-  const pct = (n) => `${Math.round((100 * n) / Math.max(1, counts.area))}%`;
+  // Small shares get a decimal (or "<0.1%") so a real but small overlap never reads as 0%.
+  const pct = (n) => {
+    if (!n) return '0%';
+    const p = (100 * n) / Math.max(1, counts.area);
+    if (p < 0.1) return '<0.1%';
+    return `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
+  };
+  // Ground area: one grid pixel covers mpp² square meters (grid shares one zoom level).
+  const pxArea = results[0].mpp ** 2;
+  const area = (n) => {
+    const m2 = n * pxArea;
+    if (state.units === 'us') {
+      const mi2 = m2 / (MI * MI);
+      return `${mi2 < 10 ? mi2.toFixed(1) : Math.round(mi2).toLocaleString()} sq mi`;
+    }
+    const km2 = m2 / 1e6;
+    return `${km2 < 10 ? km2.toFixed(1) : Math.round(km2).toLocaleString()} km²`;
+  };
   const within = `within ${fmt.dist(state.radius)}`;
   let msg;
-  if (!B) msg = `<strong>${pct(counts.both)}</strong> of the area ${within} is in line of sight.`;
-  else msg = `<span class="both-text">Seen by both: <strong>${pct(counts.both)}</strong></span> · A only ${pct(counts.a)} · B only ${pct(counts.b)} (${within} of either).`;
-  if (counts.both / Math.max(1, counts.area) < 0.03) {
-    msg += ' <span class="muted">Tip: on a broad hilltop, drag the marker toward the edge that faces the area you want to reach, or raise the antenna.</span>';
+  if (!B) {
+    msg = `<strong>${pct(counts.both)}</strong> of the area ${within} is in line of sight (${area(counts.both)}).`;
+    if (counts.both / Math.max(1, counts.area) < 0.03) {
+      msg += ' <span class="muted">Tip: on a broad hilltop, drag the marker toward the edge that faces the area you want to reach, or raise the antenna.</span>';
+    }
+  } else {
+    const share = (n) => (n ? `${area(n)} (${pct(n)})` : 'none');
+    msg = `<span class="both-text">Seen by both: <strong>${share(counts.both)}</strong></span>`
+      + ` · A only ${share(counts.a)} · B only ${share(counts.b)}`
+      + ` <span class="muted">Percentages are of all the ground within ${fmt.dist(state.radius)} of A or B.</span>`;
   }
   if (g.failed) msg += ` <span class="warn-text">${g.failed} terrain tile(s) failed to load; results there are unreliable.</span>`;
   setStatus(msg);
