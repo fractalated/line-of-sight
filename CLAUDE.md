@@ -53,6 +53,7 @@ Static site: plain HTML/CSS/ES modules, no bundler, no npm. Leaflet 1.9.4 from c
 | `js/terrain.js` | Fetches and decodes elevation tiles into a `Float32Array` grid (LRU tile cache). |
 | `js/viewshed.js` | R2 radial-sweep viewshed with Earth curvature/refraction. |
 | `js/profile.js` | A→B path profile: terrain + Earth bulge, LOS line, first Fresnel zone, verdict, canvas chart. |
+| `js/kmz.js` | KMZ export: store-only ZIP writer (CRC32), KML builder (GroundOverlays, pins, rings, path), pin icons. |
 | `js/geo.js` | Web Mercator math, distance/bearing, Maidenhead, lat/lon parsing, multi-geocoder search, reverse geocoding. |
 
 **Recompute pipeline** (`recompute()` in app.js):
@@ -163,6 +164,21 @@ math uses the DEM.
   total matched two-circle geometry within 0.2%. Shares under 10% keep one decimal ("<0.1%",
   "0%" only when truly zero). The status line now holds only tips and warnings (hidden when
   empty). The hilltop tip shows only in one-station mode.
+- **KMZ export** ("Export KMZ for Google Earth" button under the legend; `exportKmz()` in
+  app.js, `buildKmz()` in kmz.js). Each coverage class is its own GroundOverlay in its own
+  folder, so it can be toggled in Google Earth: two-station = both (pink with white outline) /
+  A only / B only / neither; one-station = not in line of sight, plus a green "in line of sight"
+  highlight that is off by default. Layer names carry the area and share. Also in the file: A/B
+  pins (embedded PNG icons, so it works offline) with label, coordinates, grid square, ground
+  elevation and antenna height; the A→B path with the profile verdict; the range circles; a
+  description with settings and a link that reopens the analysis. Pixels are fully opaque, and
+  transparency comes from each overlay's KML `<color>` alpha, so Google Earth's transparency
+  slider can go either way. **Reprojection:** a KML LatLonBox assumes rows are evenly spaced in
+  *latitude*, but our grid rows are Web Mercator, so `classLayerCanvas()` resamples each row by
+  latitude. Verified 2026-09-25: 100% of pink pixels land on the same lat/lon as the app's
+  overlay, against 59% without reprojection. Uses `lastPaint` (the per-pixel classes from the
+  last `renderOverlay`). Validated with `unzip -t` and Python `zipfile`. Not yet opened in real
+  Google Earth. If something looks off there, check drawOrder and LatLonBox first.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is
@@ -174,5 +190,5 @@ math uses the DEM.
 - Signal-strength mode (free-space path loss + knife-edge diffraction), with ERP and receiver sensitivity.
 - Repeater mode: pick a repeater site and show the areas that can reach it.
 - Tap-to-profile in single mode (profile from A to any tapped point).
-- Export the overlay as KML/GeoTIFF; save named locations.
+- GeoTIFF export; save named locations.
 - PWA / offline caching of tiles for field use.

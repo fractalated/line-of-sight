@@ -7,7 +7,7 @@
   <meta name="description" content="VHF/UHF simplex line-of-sight planner: see which areas on a satellite map your radio can see.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/style.css?v=20260925-9">
+  <link rel="stylesheet" href="css/style.css?v=20260925-11">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -118,6 +118,10 @@
 
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div id="legend" class="legend"></div>
+      <button type="button" id="kmzBtn" class="btn export-btn" disabled title="Download the coverage as layers you can turn on and off in Google Earth">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="export-label">Export KMZ for Google Earth</span>
+      </button>
 
       <section id="profileBox" class="profile" hidden>
         <div class="profile-head">
@@ -143,13 +147,14 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/geo.js": "./js/geo.js?v=20260925-9",
-      "./js/terrain.js": "./js/terrain.js?v=20260925-9",
-      "./js/viewshed.js": "./js/viewshed.js?v=20260925-9",
-      "./js/profile.js": "./js/profile.js?v=20260925-9"
+      "./js/geo.js": "./js/geo.js?v=20260925-11",
+      "./js/terrain.js": "./js/terrain.js?v=20260925-11",
+      "./js/viewshed.js": "./js/viewshed.js?v=20260925-11",
+      "./js/profile.js": "./js/profile.js?v=20260925-11",
+      "./js/kmz.js": "./js/kmz.js?v=20260925-11"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=20260925-9"></script>
+  <script type="module" src="js/app.js?v=20260925-11"></script>
 </body>
 </html>

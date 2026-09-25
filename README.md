@@ -17,6 +17,7 @@ in line of sight is left as-is.
 - Earth curvature with radio refraction (4/3 Earth), adjustable range, feet/miles or meters/km.
 - **Shading on/off** button on the map to compare against the plain imagery. Shading strength and color are under More settings.
 - **Crosshair & copy lat/long**: turn on the crosshair and drag the map (or click a spot) to aim. The coordinates show at the side with a Copy button. They're copied as `latitude, longitude`, with an on-screen confirmation. Right-click (long-press on a phone) copies any spot directly.
+- **Export KMZ for Google Earth**: each coverage color becomes its own layer you can turn on and off, along with the station pins, range circles and A→B path.
 - Shareable links: the URL holds your stations and settings.
 - Works on desktop and phone browsers. No install, no account.
 

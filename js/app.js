@@ -9,6 +9,7 @@ import {
 import { loadElevationGrid } from './terrain.js';
 import { computeViewshed, VISIBLE } from './viewshed.js';
 import { computeProfile, drawProfile } from './profile.js';
+import { buildKmz, circleCoords, pinIcon, canvasBytes } from './kmz.js';
 
 const L = window.L;
 const FT = 0.3048, MI = 1609.344, KM = 1000;
@@ -328,13 +329,15 @@ function pingAt(latlng, ok) {
 }
 
 let toastTimer = null;
-function showToast(text, ok) {
+// title defaults to the copy-coordinates wording; other callers (KMZ export) pass their own.
+function showToast(text, ok, title = null) {
   const el = $('#toast');
   el.className = `toast show ${ok ? 'ok' : 'fail'}`;
+  const t = escapeHtml(title || (ok ? 'Copied to clipboard' : 'Couldn’t copy automatically. Select and copy:'));
   el.innerHTML = ok
     ? `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-       <div><div class="toast-title">Copied to clipboard</div><div class="toast-coords">${text}</div></div>`
-    : `<div><div class="toast-title">Couldn't copy automatically. Select and copy:</div><div class="toast-coords selectable">${text}</div></div>`;
+       <div><div class="toast-title">${t}</div><div class="toast-coords">${escapeHtml(text)}</div></div>`
+    : `<div><div class="toast-title">${t}</div><div class="toast-coords selectable">${escapeHtml(text)}</div></div>`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), ok ? 2800 : 8000);
 }
@@ -634,6 +637,7 @@ function renderOverlay() {
   // The legend lists these next to each color, straight from the same pixel classes that
   // were just painted, so the numbers and the map always agree.
   lastStats = { dual: !!B, counts, pxArea: results[0].mpp ** 2 };
+  lastPaint = { cls, w, h, cx0, cy0, z, g, dual: !!B };
   renderLegend();
   let msg = '';
   if (!B && counts.both / Math.max(1, counts.area) < 0.03) {
@@ -667,6 +671,7 @@ function updateProfile() {
   } else {
     v.innerHTML = `<span class="tag">Clear.</span> Direct line of sight with at least 60% of the first Fresnel zone clear at ${state.freq} MHz.`;
   }
+  lastVerdict = v.textContent;
 }
 
 // Reverse-geocode a station's neighborhood/city, debounced so dragging doesn't spam the
@@ -718,6 +723,8 @@ function updateInfo() {
 }
 
 let lastStats = null; // { dual, counts: { area, both, a, b }, pxArea } from the last paint
+let lastPaint = null; // { cls, w, h, cx0, cy0, z, g, dual }: per-pixel classes behind the overlay
+let lastVerdict = ''; // A↔B path verdict text
 
 // Area of n grid pixels, one decimal (so the rows visibly add up to the total).
 function fmtArea(n, pxArea) {
@@ -759,7 +766,163 @@ function renderLegend() {
     ? `<div class="lg-row lg-total"><span></span><span>Total analyzed</span>${cell(c.area)}</div>
        <div class="lg-note">Everything within ${fmt.dist(state.radius)} of ${dual ? 'A or B' : 'your station'}. The rows add up to the total.</div>`
     : '';
+  $('#kmzBtn').disabled = !st;
   $('#legend').innerHTML = rows + total + `<div class="lg-row lg-ring">${ring}<span>Analysis range</span><span></span><span></span></div>`;
+}
+
+// ---------- KMZ export (Google Earth) ----------
+// One PNG per coverage class, reprojected from Web Mercator rows to the equal-angle
+// latitude rows a KML LatLonBox expects (otherwise the shading drifts north/south).
+function classLayerCanvas(p, bounds, match, color, outline = false) {
+  const { cls, w, h, cx0, cy0, z, g } = p;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  const img = x.createImageData(w, h);
+  const d = img.data;
+  const y0 = g.y0 + cy0;
+  let any = false;
+  for (let j = 0; j < h; j++) {
+    const lat = bounds.north - ((bounds.north - bounds.south) * (j + 0.5)) / h;
+    const sy = Math.min(h - 1, Math.max(0, Math.floor(latToY(lat, z) - y0)));
+    const row = sy * w;
+    for (let i = 0; i < w; i++) {
+      const k = row + i;
+      if (!match(cls[k])) continue;
+      any = true;
+      let col = color;
+      if (outline) {
+        const edge = i === 0 || sy === 0 || i === w - 1 || sy === h - 1 ||
+          !match(cls[k - 1]) || !match(cls[k + 1]) || !match(cls[k - w]) || !match(cls[k + w]);
+        if (edge) col = BOTH_EDGE;
+      }
+      const o = (j * w + i) * 4;
+      d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
+    }
+  }
+  x.putImageData(img, 0, 0);
+  return any ? c : null;
+}
+
+const slug = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+
+async function exportKmz() {
+  if (!last || !lastPaint || !lastStats) return;
+  const btn = $('#kmzBtn');
+  const label = btn.querySelector('.export-label');
+  btn.disabled = true;
+  const oldText = label.textContent;
+  label.textContent = 'Building KMZ…';
+  try {
+    const p = lastPaint;
+    const { z, g, cx0, cy0, w, h } = p;
+    const bounds = {
+      north: yToLat(g.y0 + cy0, z), south: yToLat(g.y0 + cy0 + h, z),
+      west: xToLon(g.x0 + cx0, z), east: xToLon(g.x0 + cx0 + w, z),
+    };
+    const st = lastStats, c = st.counts;
+    const areaTxt = (n) => `${fmtArea(n, st.pxArea)}, ${fmtPct(n, c.area)}`;
+    const shade = SHADES[state.shade];
+    const defs = p.dual
+      ? [
+        { name: 'Seen by both A and B', n: c.both, match: (v) => v === 4, color: BOTH, alpha: 0.7, outline: true, order: 4, file: 'both' },
+        { name: 'Seen by A only', n: c.a, match: (v) => v === 2, color: ONLY_A, alpha: 0.45, order: 3, file: 'a-only' },
+        { name: 'Seen by B only', n: c.b, match: (v) => v === 3, color: ONLY_B, alpha: 0.45, order: 2, file: 'b-only' },
+        { name: 'Seen by neither', n: c.area - c.both - c.a - c.b, match: (v) => v === 1, color: shade, alpha: state.opacity, order: 1, file: 'neither' },
+      ]
+      : [
+        { name: 'Not in line of sight', n: c.area - c.both, match: (v) => v === 1, color: shade, alpha: state.opacity, order: 1, file: 'not-visible' },
+        { name: 'In line of sight (highlight)', n: c.both, match: (v) => v === 4, color: [40, 200, 90], alpha: 0.45, order: 2, file: 'visible', hidden: true },
+      ];
+    const layers = [];
+    for (const dfn of defs) {
+      const canvas = classLayerCanvas(p, bounds, dfn.match, dfn.color, dfn.outline);
+      if (!canvas) continue;
+      layers.push({
+        name: `${dfn.name} (${areaTxt(dfn.n)})`,
+        file: `files/${dfn.file}.png`,
+        png: await canvasBytes(canvas),
+        alpha: dfn.alpha,
+        visible: !dfn.hidden,
+        drawOrder: dfn.order,
+        description: `${escapeHtml(dfn.name)}: ${escapeHtml(areaTxt(dfn.n))} of the ${escapeHtml(fmtArea(c.area, st.pxArea))} analyzed.`,
+      });
+    }
+
+    const keys = p.dual ? ['a', 'b'] : ['a'];
+    const hts = { a: state.hA, b: state.hB };
+    const ground = {};
+    for (const r of last.results) ground[r.key] = r.ground;
+    const stations = [];
+    for (const key of keys) {
+      const s = state[key];
+      const K = key.toUpperCase();
+      const title = p.dual ? `Station ${K}` : 'Your station';
+      stations.push({
+        key,
+        name: `${K}: ${state.labels[key] || `${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}`}`,
+        lat: s.lat, lon: s.lon,
+        icon: await pinIcon(K, key === 'a' ? '#2b78ff' : '#ff9614'),
+        description: `<b>${escapeHtml(title)}</b><br>${escapeHtml(state.labels[key] || '')}<br>
+          ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)} · ${toMaidenhead(s.lat, s.lon)}<br>
+          Ground ${escapeHtml(fmt.elev(ground[key] ?? 0))} · antenna ${escapeHtml(fmt.height(hts[key]))}`,
+      });
+    }
+    const circles = keys.map((key) => ({
+      name: `Range around ${key.toUpperCase()} (${fmt.dist(state.radius)})`,
+      coords: circleCoords(state[key].lat, state[key].lon, state.radius),
+      color: key === 'a' ? [43, 120, 255] : [255, 150, 20],
+    }));
+    const path = p.dual ? {
+      name: `Path A → B (${fmt.dist(distanceM(state.a, state.b))})`,
+      coords: `${state.a.lon},${state.a.lat},0 ${state.b.lon},${state.b.lat},0`,
+      color: [255, 255, 255],
+      description: escapeHtml(lastVerdict),
+    } : null;
+
+    const title = p.dual
+      ? `Line of Sight: ${state.labels.a || 'A'} & ${state.labels.b || 'B'}`
+      : `Line of Sight: ${state.labels.a || 'station'}`;
+    const kLabel = state.k > 1.2 ? 'radio (4/3 Earth)' : state.k > 0 ? 'optical (true Earth)' : 'ignored (flat)';
+    const description = `
+      <p>Line-of-sight coverage from <a href="${escapeHtml(location.href)}">Line of Sight</a>, exported ${escapeHtml(new Date().toLocaleString())}.</p>
+      <table>
+        <tr><td>Range analyzed</td><td>${escapeHtml(fmt.dist(state.radius))}${p.dual ? ' around A and around B' : ''}</td></tr>
+        <tr><td>Antenna A</td><td>${escapeHtml(fmt.height(state.hA))}</td></tr>
+        ${p.dual ? `<tr><td>Antenna B</td><td>${escapeHtml(fmt.height(state.hB))}</td></tr>` : ''}
+        <tr><td>Other radio's antenna</td><td>${escapeHtml(fmt.height(state.hT))}</td></tr>
+        <tr><td>Earth curvature</td><td>${escapeHtml(kLabel)}</td></tr>
+        <tr><td>Total analyzed</td><td>${escapeHtml(fmtArea(c.area, st.pxArea))}</td></tr>
+      </table>
+      <p>Terrain only (AWS Terrain Tiles elevation). Trees and buildings are not modeled.</p>
+      <p><a href="${escapeHtml(location.href)}">Open this analysis in Line of Sight</a></p>`;
+    const center = p.dual
+      ? { lat: (state.a.lat + state.b.lat) / 2, lon: (state.a.lon + state.b.lon) / 2 }
+      : state.a;
+    const span = state.radius * 2 + (p.dual ? distanceM(state.a, state.b) : 0);
+
+    const blob = buildKmz({
+      name: title, description,
+      lookAt: { lat: center.lat, lon: center.lon, range: span * 1.4 },
+      bounds, layers, stations, circles, path,
+    });
+    const date = new Date().toISOString().slice(0, 10);
+    const namePart = keys.map((k) => slug(state.labels[k]) || k).join('_');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `line-of-sight_${namePart}_${date}.kmz`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    showToast(`${a.download}`, true, 'KMZ downloaded');
+  } catch (err) {
+    console.error(err);
+    showToast(`Export failed: ${err.message}`, false, 'KMZ export failed');
+  } finally {
+    btn.disabled = false;
+    label.textContent = oldText;
+  }
 }
 
 // ---------- UI wiring ----------
@@ -909,6 +1072,8 @@ function wireControls() {
     renderLegend();
     writeHash();
   });
+
+  $('#kmzBtn').addEventListener('click', exportKmz);
 
   $('#panelToggle').addEventListener('click', () => {
     const panel = $('#panel');
