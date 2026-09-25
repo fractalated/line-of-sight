@@ -90,14 +90,75 @@ export function parseLatLon(s) {
   return { lat, lon };
 }
 
-// Returns up to 5 matches as [{ name, lat, lon }]. Nominatim first, Photon as fallback.
+// ---------- Geocoding (Nominatim first, Photon as fallback) ----------
+// Nominatim allows 1 request/second, so every Nominatim call goes through one queue.
+let nominatimChain = Promise.resolve();
+let lastNominatim = 0;
+function nominatim(path) {
+  const run = async () => {
+    const wait = lastNominatim + 1100 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastNominatim = Date.now();
+    const r = await fetch(`https://nominatim.openstreetmap.org/${path}`);
+    if (!r.ok) throw new Error(`Nominatim HTTP ${r.status}`);
+    return r.json();
+  };
+  const p = nominatimChain.then(run, run);
+  nominatimChain = p.catch(() => {});
+  return p;
+}
+
+// OSM "suburb" usually holds a city's well-known neighborhood (Capitol Hill, Belltown);
+// "neighbourhood" is often a smaller unit (a historic district), so it comes second.
+const HOOD_KEYS = ['suburb', 'neighbourhood', 'quarter', 'hamlet', 'residential', 'city_district'];
+const CITY_KEYS = ['city', 'town', 'village', 'municipality'];
+const pick = (a, keys) => keys.map((k) => a[k]).find(Boolean);
+
+// "CO" for US states (from ISO 3166-2 "US-CO"), otherwise the state/region name.
+function region(a) {
+  const iso = a['ISO3166-2-lvl4'];
+  if (iso && iso.startsWith('US-')) return iso.slice(3);
+  return a.state || a.country || '';
+}
+
+function join(parts) {
+  const out = [];
+  for (const p of parts) if (p && !out.includes(p)) out.push(p);
+  return out.join(', ');
+}
+
+// Label for a searched place: the street address when there is one, else the place name.
+function searchLabel(name, a) {
+  const city = pick(a, CITY_KEYS);
+  const locality = city || a.county;
+  const st = region(a);
+  if (a.house_number && a.road) {
+    return join([`${a.house_number} ${a.road}`, locality, [st, a.postcode].filter(Boolean).join(' ')]);
+  }
+  if (a.road && !name) return join([a.road, locality, st]);
+  return join([name, locality, st]);
+}
+
+// Label for a clicked point: neighborhood and city (county when rural).
+function areaLabel(a) {
+  const hood = pick(a, HOOD_KEYS);
+  const city = pick(a, CITY_KEYS);
+  if (hood && city) return join([hood, city]);
+  const place = hood || city || a.county;
+  return place ? join([place, region(a)]) : join([a.state, a.country]);
+}
+
+// Returns up to 5 matches as [{ name, label, lat, lon }].
 export async function geocode(q) {
   const enc = encodeURIComponent(q);
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${enc}`);
-    if (!r.ok) throw new Error(`Nominatim HTTP ${r.status}`);
-    const j = await r.json();
-    return j.map((x) => ({ name: x.display_name, lat: +x.lat, lon: +x.lon }));
+    const j = await nominatim(`search?format=jsonv2&addressdetails=1&limit=5&q=${enc}`);
+    return j.map((x) => ({
+      name: x.display_name,
+      label: searchLabel(x.name, x.address || {}) || x.display_name,
+      lat: +x.lat,
+      lon: +x.lon,
+    }));
   } catch (err) {
     console.warn('Nominatim failed, trying Photon', err);
     const r = await fetch(`https://photon.komoot.io/api/?limit=5&q=${enc}`);
@@ -105,11 +166,29 @@ export async function geocode(q) {
     const j = await r.json();
     return j.features.map((f) => {
       const p = f.properties;
+      const a = { house_number: p.housenumber, road: p.street, city: p.city, county: p.county, state: p.state, postcode: p.postcode };
       return {
         name: [p.name, p.city, p.state, p.country].filter(Boolean).join(', '),
+        label: searchLabel(p.name, a),
         lat: f.geometry.coordinates[1],
         lon: f.geometry.coordinates[0],
       };
     });
+  }
+}
+
+// Neighborhood + city for a point, e.g. "Civic Center, Denver"; null if unknown.
+export async function reverseGeocode(lat, lon) {
+  try {
+    const j = await nominatim(`reverse?format=jsonv2&addressdetails=1&zoom=16&lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}`);
+    if (j.error || !j.address) return null;
+    return areaLabel(j.address) || null;
+  } catch (err) {
+    console.warn('Nominatim reverse failed, trying Photon', err);
+    const r = await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}`);
+    if (!r.ok) return null;
+    const p = ((await r.json()).features[0] || {}).properties;
+    if (!p) return null;
+    return areaLabel({ neighbourhood: p.district || p.locality, city: p.city, county: p.county, state: p.state }) || null;
   }
 }

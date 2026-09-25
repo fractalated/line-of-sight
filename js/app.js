@@ -4,7 +4,7 @@
 
 import {
   lonToX, latToY, xToLon, yToLat, metersPerPixel, distanceM, bearingDeg,
-  compassPoint, toMaidenhead, fromMaidenhead, parseLatLon, geocode,
+  compassPoint, toMaidenhead, fromMaidenhead, parseLatLon, geocode, reverseGeocode,
 } from './geo.js';
 import { loadElevationGrid } from './terrain.js';
 import { computeViewshed, VISIBLE } from './viewshed.js';
@@ -46,6 +46,8 @@ const state = {
   shade: 'dark',
   opacity: 0.3,
   target: 'a', // which station a map click places in dual mode
+  // Sidebar place labels: the searched address, or neighborhood + city for clicked points.
+  labels: { a: '', b: '' },
 };
 
 // ---------- Persistence (URL hash holds the shareable state) ----------
@@ -60,6 +62,7 @@ function readHash() {
   state.mode = p.get('m') === '2' ? 'dual' : 'single';
   state.a = ll(p.get('a'));
   state.b = ll(p.get('b'));
+  state.labels = { a: p.get('la') || '', b: p.get('lb') || '' };
   state.hA = num('ha', DEFAULT_H); state.hB = num('hb', DEFAULT_H); state.hT = num('ht', DEFAULT_H);
   state.radius = num('r', state.radius);
   state.k = num('k', state.k);
@@ -76,6 +79,8 @@ function writeHash() {
   p.set('m', state.mode === 'dual' ? '2' : '1');
   if (state.a) p.set('a', ll(state.a));
   if (state.b) p.set('b', ll(state.b));
+  if (state.a && state.labels.a) p.set('la', state.labels.a);
+  if (state.b && state.labels.b) p.set('lb', state.labels.b);
   p.set('ha', +state.hA.toFixed(2));
   p.set('hb', +state.hB.toFixed(2));
   p.set('ht', +state.hT.toFixed(2));
@@ -443,8 +448,12 @@ map.on('click', (e) => {
   placeStation(key, p.lat, p.lng, { pan: !far && state.mode === 'single', fit: far });
 });
 
-function placeStation(key, lat, lon, { pan = false, fit = false } = {}) {
+// label: pass the searched address; omit it to look up neighborhood + city for the point.
+function placeStation(key, lat, lon, { pan = false, fit = false, label = null } = {}) {
   state[key] = { lat, lon };
+  state.labels[key] = label || '';
+  if (label) cancelLabelLookup(key);
+  else lookupLabel(key);
   if (state.mode === 'dual' && key === 'a' && !state.b) setTarget('b');
   syncMapObjects();
   if (fit) fitStations();
@@ -660,16 +669,49 @@ function updateProfile() {
   }
 }
 
+// Reverse-geocode a station's neighborhood/city, debounced so dragging doesn't spam the
+// geocoder; results for a station that has since moved are dropped.
+const labelTimers = {};
+const labelLookups = { a: 0, b: 0 };
+function lookupLabel(key, delay = 400) {
+  const id = ++labelLookups[key];
+  clearTimeout(labelTimers[key]);
+  labelTimers[key] = setTimeout(async () => {
+    const s = state[key];
+    if (!s) return;
+    let label = null;
+    try { label = await reverseGeocode(s.lat, s.lon); } catch (err) { console.warn(err); }
+    if (id !== labelLookups[key]) return;
+    state.labels[key] = label || '';
+    labelLookups[key] = 0; // done: no longer pending
+    updateInfo();
+    writeHash();
+  }, delay);
+  updateInfo();
+}
+
+function cancelLabelLookup(key) {
+  clearTimeout(labelTimers[key]);
+  labelLookups[key] = 0;
+}
+
 function updateInfo() {
   const ground = {};
   if (last) for (const r of last.results) ground[r.key] = r.ground;
   for (const key of ['a', 'b']) {
     const el = $(`#info${key.toUpperCase()}`);
     const s = state[key];
+    const place = $(`#place${key.toUpperCase()}`);
     if (!s) {
+      place.hidden = true;
       el.textContent = key === 'a' ? 'Click the map, search, or use your location.' : 'Choose B above, then click the map.';
       continue;
     }
+    const pending = labelLookups[key] > 0;
+    place.hidden = !pending && !state.labels[key];
+    place.classList.toggle('pending', pending);
+    place.textContent = pending ? 'Looking up place…' : state.labels[key];
+    place.title = place.textContent;
     const g = ground[key] != null ? ` · ground ${fmt.elev(ground[key])}` : '';
     el.textContent = `${s.lat.toFixed(5)}, ${s.lon.toFixed(5)} · ${toMaidenhead(s.lat, s.lon)}${g}`;
   }
@@ -860,7 +902,7 @@ function wireControls() {
     try {
       const hits = await geocode(q);
       if (!hits.length) { setStatus(`No places found for “${escapeHtml(q)}”.`, true); return; }
-      placeStation(key, hits[0].lat, hits[0].lon, { fit: true });
+      placeStation(key, hits[0].lat, hits[0].lon, { fit: true, label: hits[0].label });
       if (hits.length > 1) {
         list.innerHTML = hits.map((h, i) => `<li><button type="button" data-i="${i}">${escapeHtml(h.name)}</button></li>`).join('');
         list.hidden = false;
@@ -868,7 +910,7 @@ function wireControls() {
           const b = ev.target.closest('button');
           if (!b) return;
           const h = hits[+b.dataset.i];
-          placeStation(key, h.lat, h.lon, { fit: true });
+          placeStation(key, h.lat, h.lon, { fit: true, label: h.label });
           list.hidden = true;
         };
       }
@@ -918,6 +960,7 @@ document.body.classList.toggle('dual', state.mode === 'dual');
 for (const b of document.querySelectorAll('#modeSeg button')) b.setAttribute('aria-checked', String(b.dataset.mode === state.mode));
 $('#titleA').textContent = state.mode === 'dual' ? 'Station A' : 'Your station';
 map.setView([39.5, -98.35], 4);
+for (const key of ['a', 'b']) if (state[key] && !state.labels[key]) lookupLabel(key, 0);
 if (state.a || state.b) {
   syncMapObjects();
   fitStations();

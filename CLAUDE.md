@@ -24,6 +24,13 @@ is needed because the app uses ES modules. Commit and push when done so the othe
 
 Keep this file up to date when decisions change. It is how context moves between machines.
 
+**Releasing: bump the version.** `index.html` stamps every CSS/JS URL with `?v=YYYYMMDD-N`
+(the module script, the stylesheet, and an import map that versions the inner imports). Bump
+it, replacing every occurrence, on any change to `css/` or `js/`. GitHub Pages lets browsers
+cache files for 10 minutes. Without the bump, visitors get a mix of old and new modules, which
+breaks the page (e.g. a missing export). When adding a new JS module, add it to the import map.
+One-liner: `sed -i '' 's/v=OLD/v=NEW/g' index.html`.
+
 ## Requirements (from the owner)
 
 1. Enter a location (place name, address, `lat, lon`, or Maidenhead grid square) **or** use the device's location.
@@ -71,7 +78,7 @@ into the overlay pixels (the image overlay itself is at opacity 1), so moving th
 repaints the overlay. Single-station mode still leaves visible areas unshaded. The A↔B
 profile gives the direct simplex verdict: blocked / marginal (<60% of Fresnel zone 1 clear) / clear.
 
-**State** lives in the URL hash (shareable links): `m` mode (1/2), `a`,`b` lat,lon, `ha`,`hb`,`ht`
+**State** lives in the URL hash (shareable links): `m` mode (1/2), `a`,`b` lat,lon, `la`,`lb` place labels, `ha`,`hb`,`ht`
 heights in **meters**, `r` radius in meters, `k`, `f` MHz, `u` units, `s` shade, `o` opacity.
 localStorage keeps only the chosen base layer and label toggles (wrapped in try/catch).
 
@@ -119,6 +126,18 @@ math uses the DEM.
   `navigator.clipboard.writeText`, falling back to `execCommand('copy')`. Confirmation: the
   Copy button turns green ("Copied ✓"), a green banner drops down at the top, and a ring
   ripples at the spot. On failure, a red banner shows the text to copy by hand.
+- **Station place labels** (sidebar, above the coordinates). A searched place shows its
+  address from the geocoder (`searchLabel()` in geo.js). A street address shows as
+  `1437 Bannock Street, Denver, CO 80202`, and other places as name + city/county + state.
+  Points placed by map click, marker drag, "use my location", or typed lat/lon or grid square
+  are reverse-geocoded to **neighborhood + city** (`areaLabel()`): e.g. `Capitol Hill, Denver`.
+  Neighborhood order is suburb → neighbourhood → quarter → hamlet (OSM `suburb` holds the
+  well-known names; `neighbourhood` is often a historic district). No neighborhood → `City, ST`;
+  rural → `County, ST`. Owner's rule: a typed street address shows that address; a clicked
+  point shows neighborhood and city, never a street address. Lookups are debounced (400 ms), and
+  results for a station that has since moved are dropped. All Nominatim calls share a 1.1 s
+  queue (usage policy). Labels are saved in the hash as `la`/`lb`; a link without them gets
+  looked up on load.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is

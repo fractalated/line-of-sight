@@ -143,6 +143,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   background: var(--field);
   max-height: 160px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 .results li button {
   all: unset;
@@ -192,6 +193,8 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   gap: 8px;
 }
 .st-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.st-place { font-weight: 600; font-size: 13.5px; line-height: 1.3; margin-bottom: -4px; overflow-wrap: anywhere; }
+.st-place.pending { color: var(--muted); font-weight: 400; font-style: italic; }
 .st-info { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 .badge {

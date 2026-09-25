@@ -7,7 +7,7 @@
   <meta name="description" content="VHF/UHF simplex line-of-sight planner: see which areas on a satellite map your radio can see.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260925-2">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -58,12 +58,14 @@
 
       <section class="station">
         <div class="st-head"><span class="badge a">A</span><span class="st-title" id="titleA">Your station</span></div>
+        <div class="st-place" id="placeA" hidden></div>
         <div class="st-info" id="infoA">Click the map, search, or use your location.</div>
         <div class="height-ctl" data-key="hA" data-label="Antenna height"></div>
       </section>
 
       <section class="station dual-only">
         <div class="st-head"><span class="badge b">B</span><span class="st-title">Station B</span></div>
+        <div class="st-place" id="placeB" hidden></div>
         <div class="st-info" id="infoB">Choose B above, then click the map.</div>
         <div class="height-ctl" data-key="hB" data-label="Antenna height"></div>
       </section>
@@ -134,6 +136,19 @@
   </aside>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script type="module" src="js/app.js"></script>
+  <!-- Release version: bump v (all occurrences in this file) on every change to css/ or js/.
+       GitHub Pages lets browsers cache files for 10 minutes; without this, a visitor can get a
+       mix of old and new modules and a broken page. The import map versions the inner imports. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "./js/geo.js": "./js/geo.js?v=20260925-2",
+      "./js/terrain.js": "./js/terrain.js?v=20260925-2",
+      "./js/viewshed.js": "./js/viewshed.js?v=20260925-2",
+      "./js/profile.js": "./js/profile.js?v=20260925-2"
+    }
+  }
+  </script>
+  <script type="module" src="js/app.js?v=20260925-2"></script>
 </body>
 </html>
