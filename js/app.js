@@ -10,6 +10,7 @@ import { loadElevationGrid } from './terrain.js';
 import { computeViewshed, VISIBLE } from './viewshed.js';
 import { computeProfile, drawProfile } from './profile.js';
 import { buildKmz, circleCoords, pinIcon, canvasBytes } from './kmz.js';
+import { findRelays } from './relay.js';
 
 const L = window.L;
 const FT = 0.3048, MI = 1609.344, KM = 1000;
@@ -34,6 +35,8 @@ const PRESETS = {
 };
 const SLIDER_MAX = { us: 500, metric: 150 };
 const DEFAULT_H = 5 * FT;
+const DEFAULT_RELAY_H = 10 * FT; // a Meshtastic node or repeater on a short mast
+const RELAY_COLOR = '#9b30ff';
 
 const state = {
   mode: 'single', // 'single' | 'dual'
@@ -42,6 +45,7 @@ const state = {
   // Antenna heights above ground, meters. "Ground level" means a person standing
   // with a handheld (5 ft): at a literal 0 ft, DEM bumps a few meters away block nearly everything.
   hA: DEFAULT_H, hB: DEFAULT_H, hT: DEFAULT_H,
+  hR: DEFAULT_RELAY_H, // relay antenna height (relay-site search)
   radius: 10 * MI, // meters
   k: 4 / 3,
   freq: 146.52, // MHz, national 2 m simplex calling frequency
@@ -66,6 +70,7 @@ function readHash() {
   state.b = ll(p.get('b'));
   state.labels = { a: p.get('la') || '', b: p.get('lb') || '' };
   state.hA = num('ha', DEFAULT_H); state.hB = num('hb', DEFAULT_H); state.hT = num('ht', DEFAULT_H);
+  state.hR = num('hr', DEFAULT_RELAY_H);
   state.radius = num('r', state.radius);
   state.k = num('k', state.k);
   state.freq = num('f', state.freq);
@@ -86,6 +91,7 @@ function writeHash() {
   p.set('ha', +state.hA.toFixed(2));
   p.set('hb', +state.hB.toFixed(2));
   p.set('ht', +state.hT.toFixed(2));
+  p.set('hr', +state.hR.toFixed(2));
   p.set('r', Math.round(state.radius));
   p.set('k', +state.k.toFixed(4));
   p.set('f', state.freq);
@@ -151,12 +157,14 @@ const roadLabels = L.tileLayer(`${ESRI}/Reference/World_Transportation/MapServer
   maxZoom: 19, maxNativeZoom: 18, pane: 'labels', opacity: 0.8,
 });
 const losLayer = L.layerGroup();
+const relayLayer = L.layerGroup(); // relay-site pins and routes (two-station mode)
 
 const savedBase = store.get('los.base');
 (baseLayers[savedBase] || baseLayers['Satellite (Esri World Imagery)']).addTo(map);
 if (store.get('los.labels') !== '0') placeLabels.addTo(map);
 if (store.get('los.roads') === '1') roadLabels.addTo(map);
 losLayer.addTo(map);
+relayLayer.addTo(map);
 
 L.control.layers(baseLayers, {
   'Place names': placeLabels,
@@ -536,6 +544,9 @@ async function recompute() {
     last = { grid, z, results };
     renderOverlay();
     updateProfile();
+    // Relay results are only valid for the stations/settings they were found with.
+    if (relay && relay.key !== relayKey()) clearRelays('Stations or settings changed. Press “Find relay sites” to search again.');
+    updateRelayBox();
     updateInfo();
     renderLegend();
   } catch (err) {
@@ -671,6 +682,7 @@ function updateProfile() {
     v.innerHTML = `<span class="tag">Clear.</span> Direct line of sight with at least 60% of the first Fresnel zone clear at ${state.freq} MHz.`;
   }
   lastVerdict = v.textContent;
+  lastProf = prof;
 }
 
 // Reverse-geocode a station's neighborhood/city, debounced so dragging doesn't spam the
@@ -724,6 +736,7 @@ function updateInfo() {
 let lastStats = null; // { dual, counts: { area, both, a, b }, pxArea } from the last paint
 let lastPaint = null; // { cls, w, h, cx0, cy0, z, g, dual }: per-pixel classes behind the overlay
 let lastVerdict = ''; // A↔B path verdict text
+let lastProf = null; // A↔B profile result (verdict, minRatio…)
 
 // Area of n grid pixels, one decimal (so the rows visibly add up to the total).
 function fmtArea(n, pxArea) {
@@ -767,6 +780,194 @@ function renderLegend() {
     : '';
   $('#kmzBtn').disabled = !st;
   $('#legend').innerHTML = rows + total + `<div class="lg-row lg-ring">${ring}<span>Analysis range</span><span></span><span></span></div>`;
+}
+
+// ---------- Relay sites (repeater / Meshtastic) ----------
+// relay = { key, hops (1|2), routes: [{ relays: [{x, y, lat, lon, ground}], legs, totalM, moved }], selected }
+let relay = null;
+let relaySearching = false;
+
+function relayKey() {
+  if (!last || last.results.length < 2) return '';
+  const r = (v) => v.toFixed(5);
+  return [r(state.a.lat), r(state.a.lon), r(state.b.lat), r(state.b.lon), state.hA, state.hB, state.hR,
+    state.radius, state.k, last.grid.key].join('|');
+}
+
+const cellToLatLng = (x, y) => ({ lat: yToLat(last.grid.y0 + y + 0.5, last.z), lon: xToLon(last.grid.x0 + x + 0.5, last.z) });
+
+// Check every leg of a route with the same terrain profile as the A→B chart.
+function evaluateRoute(route) {
+  const g = last.grid;
+  const [ra, rb] = last.results;
+  const pts = [
+    { name: 'A', gx: ra.gx, gy: ra.gy, h: state.hA, lat: state.a.lat, lon: state.a.lon },
+    ...route.relays.map((p) => ({ name: p.name, gx: p.x, gy: p.y, h: state.hR, lat: p.lat, lon: p.lon })),
+    { name: 'B', gx: rb.gx, gy: rb.gy, h: state.hB, lat: state.b.lat, lon: state.b.lon },
+  ];
+  route.legs = [];
+  route.totalM = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p = pts[i], q = pts[i + 1];
+    const distM = distanceM(p, q);
+    const prof = computeProfile(g, p, q, { distM, k: state.k, freqMHz: state.freq });
+    route.legs.push({ from: p.name, to: q.name, distM, verdict: prof.verdict, fresnel: Math.max(0, Math.round(prof.minRatio * 100)) });
+    route.totalM += distM;
+  }
+  route.ok = route.legs.every((l) => l.verdict !== 'blocked');
+  return route;
+}
+
+function updateRelayBox() {
+  const show = state.mode === 'dual' && !!last && last.results.length === 2;
+  $('#relayBox').hidden = !show;
+  $('#relayBtn').disabled = !show || relaySearching;
+}
+
+function relayMsg(html, kind = 'info') {
+  const el = $('#relayMsg');
+  el.hidden = !html;
+  el.className = `search-msg ${kind}`;
+  el.innerHTML = html;
+}
+
+function clearRelays(message) {
+  relay = null;
+  relayLayer.clearLayers();
+  $('#relayList').innerHTML = '';
+  relayMsg(message || '', 'info');
+}
+
+async function runRelaySearch() {
+  if (!last || last.results.length < 2 || relaySearching) return;
+  relaySearching = true;
+  updateRelayBox();
+  relayLayer.clearLayers();
+  $('#relayList').innerHTML = '';
+  relayMsg('Searching for relay sites…', 'info');
+  const key = relayKey();
+  const [ra, rb] = last.results;
+  try {
+    const found = await findRelays(last.grid, {
+      a: { gx: ra.gx, gy: ra.gy, h: state.hA },
+      b: { gx: rb.gx, gy: rb.gy, h: state.hB },
+      hR: state.hR, radiusPx: ra.radiusPx, mpp: ra.mpp, k: state.k, maxRoutes: 12,
+    }, (done, total) => relayMsg(`No single relay site works, so checking two-relay routes: ${done} of ${total} candidate sites…`, 'info'));
+    if (key !== relayKey()) return; // stations moved while searching
+    // Keep the shortest routes whose legs also pass the profile check (grazing paths can differ).
+    const routes = [];
+    for (const r of found.routes) {
+      r.relays = r.relays.map((p, i) => ({ ...p, ...cellToLatLng(p.x, p.y), ground: last.grid.elev[p.y * last.grid.W + p.x], idx: i }));
+      if (evaluateRoute(r).ok) routes.push(r);
+      if (routes.length === 3) break;
+    }
+    if (!routes.length) {
+      relayMsg(`<strong>No relay site found</strong> within ${escapeHtml(fmt.dist(state.radius))} of both stations with a ${escapeHtml(fmt.height(state.hR))} relay antenna. Try a taller relay antenna or a bigger range.`, 'error');
+      return;
+    }
+    relay = { key, hops: found.hops, routes, selected: 0 };
+    nameRelays();
+    routes.forEach(evaluateRoute); // again, so the legs carry the final pin names
+    const direct = lastProf ? lastProf.verdict : '';
+    const intro = direct === 'clear'
+      ? 'A and B already have a clear direct path, so a relay isn’t required. These would still work:'
+      : direct === 'marginal'
+        ? 'The direct A↔B path is marginal. A relay here would give solid line of sight:'
+        : found.hops === 1
+          ? 'The direct path is blocked, but <strong>one relay</strong> can link A and B:'
+          : 'No single site sees both stations, so these routes use <strong>two relays</strong>:';
+    relayMsg(`${intro} <span class="muted">Shortest route first. Drag a purple pin to fine-tune; each hop is rechecked.</span>`, direct === 'clear' ? 'info' : 'warn');
+    renderRelays(true);
+  } catch (err) {
+    console.error(err);
+    relayMsg(`<strong>Relay search failed.</strong> ${escapeHtml(err.message)}`, 'error');
+  } finally {
+    relaySearching = false;
+    updateRelayBox();
+  }
+}
+
+// Option n → pins "n" (one relay) or "na"/"nb" (two relays, a nearer A).
+function nameRelays() {
+  relay.routes.forEach((r, i) => r.relays.forEach((p, j) => { p.name = r.relays.length === 1 ? `${i + 1}` : `${i + 1}${'ab'[j]}`; }));
+}
+
+function relayIcon(name, selected) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="relay-marker${selected ? ' sel' : ''}"><span>${name}</span></div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+  });
+}
+
+function relayPopup(route, p) {
+  const legs = route.legs.filter((l) => l.from === p.name || l.to === p.name)
+    .map((l) => `${escapeHtml(l.from)} → ${escapeHtml(l.to)}: ${escapeHtml(fmt.dist(l.distM))}, ${l.verdict}`).join('<br>');
+  return `<div class="relay-pop"><strong>Relay ${escapeHtml(p.name)}</strong><br>
+    <span class="mono">${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}</span><br>
+    Ground ${escapeHtml(fmt.elev(p.ground))} · antenna ${escapeHtml(fmt.height(state.hR))}<br>${legs}<br>
+    <button type="button" class="btn relay-copy">Copy lat, long</button></div>`;
+}
+
+function renderRelays(fit = false) {
+  relayLayer.clearLayers();
+  if (!relay) return;
+  relay.routes.forEach((route, i) => {
+    const sel = i === relay.selected;
+    const lls = [[state.a.lat, state.a.lon], ...route.relays.map((p) => [p.lat, p.lon]), [state.b.lat, state.b.lon]];
+    if (sel) L.polyline(lls, { color: '#fff', weight: 7, opacity: 0.8, interactive: false }).addTo(relayLayer);
+    L.polyline(lls, { color: RELAY_COLOR, weight: sel ? 4 : 2, opacity: sel ? 1 : 0.55, dashArray: sel ? '10 6' : '4 6', interactive: false }).addTo(relayLayer);
+    for (const p of route.relays) {
+      const m = L.marker([p.lat, p.lon], { icon: relayIcon(p.name, sel), draggable: true, zIndexOffset: sel ? 900 : 500, title: `Relay ${p.name} (drag to adjust)` })
+        .bindPopup(() => relayPopup(route, p))
+        .on('popupopen', (e) => {
+          const btn = e.popup.getElement().querySelector('.relay-copy');
+          if (btn) btn.onclick = () => copyCoords(L.latLng(p.lat, p.lon));
+        })
+        .on('dragend', (e) => moveRelay(route, p, e.target.getLatLng().wrap()))
+        .on('click', () => { if (relay.selected !== i) selectRelayRoute(i); })
+        .addTo(relayLayer);
+      if (sel) m.setZIndexOffset(1000);
+    }
+  });
+  renderRelayList();
+  if (fit) {
+    const r = relay.routes[relay.selected];
+    map.fitBounds(L.latLngBounds([[state.a.lat, state.a.lon], [state.b.lat, state.b.lon], ...r.relays.map((p) => [p.lat, p.lon])]), viewPadding());
+  }
+}
+
+function selectRelayRoute(i) {
+  relay.selected = i;
+  renderRelays(true);
+}
+
+function moveRelay(route, p, ll) {
+  const g = last.grid;
+  const x = Math.floor(lonToX(ll.lng, last.z) - g.x0), y = Math.floor(latToY(ll.lat, last.z) - g.y0);
+  if (x < 1 || y < 1 || x >= g.W - 1 || y >= g.H - 1) {
+    relayMsg('That spot is outside the loaded terrain. Keep relays within the range circles.', 'error');
+    renderRelays();
+    return;
+  }
+  Object.assign(p, { x, y, lat: ll.lat, lon: ll.lng, ground: g.elev[y * g.W + x] });
+  route.moved = true;
+  evaluateRoute(route);
+  renderRelays();
+}
+
+function renderRelayList() {
+  const tag = (v) => `<span class="v ${v}">${v === 'clear' ? 'clear' : v === 'marginal' ? 'marginal' : 'blocked'}</span>`;
+  $('#relayList').innerHTML = relay.routes.map((r, i) => {
+    const n = r.relays.length;
+    const legs = r.legs.map((l) => `${escapeHtml(l.from)} → ${escapeHtml(l.to)} ${escapeHtml(fmt.dist(l.distM))} ${tag(l.verdict)}`).join('<br>');
+    const coords = r.relays.map((p) => `<div class="ro-coord"><span class="rbadge">${p.name}</span><span class="mono">${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}</span><button type="button" class="btn ro-copy" data-lat="${p.lat}" data-lon="${p.lon}">Copy</button></div>`).join('');
+    return `<div class="relay-opt${i === relay.selected ? ' on' : ''}${r.ok ? '' : ' bad'}" data-i="${i}" role="button" tabindex="0">
+      <div class="ro-head"><strong>Option ${i + 1}</strong> · ${n} relay${n > 1 ? 's' : ''} · ${escapeHtml(fmt.dist(r.totalM))} total${r.moved ? ' <span class="muted">(adjusted)</span>' : ''}</div>
+      <div class="ro-legs">${legs}</div>${coords}
+    </div>`;
+  }).join('');
 }
 
 // ---------- KMZ export (Google Earth) ----------
@@ -901,10 +1102,31 @@ async function exportKmz() {
       : state.a;
     const span = state.radius * 2 + (p.dual ? distanceM(state.a, state.b) : 0);
 
+    // Relay sites, if a search was run for exactly these stations and settings.
+    let relays = null;
+    if (p.dual && relay && relay.key === relayKey()) {
+      relays = {
+        icon: await pinIcon('R', RELAY_COLOR),
+        routes: relay.routes.map((r, i) => {
+          const legs = r.legs.map((l) => `${escapeHtml(l.from)} → ${escapeHtml(l.to)}: ${escapeHtml(fmt.dist(l.distM))}, ${l.verdict}`).join('<br>');
+          return {
+            name: `Option ${i + 1}: ${r.relays.length} relay${r.relays.length > 1 ? 's' : ''}, ${fmt.dist(r.totalM)} total`,
+            description: `${legs}<br>Relay antenna ${escapeHtml(fmt.height(state.hR))} · checked at ${state.freq} MHz`,
+            visible: i === relay.selected,
+            coords: [state.a, ...r.relays, state.b].map((q) => `${q.lon.toFixed(6)},${q.lat.toFixed(6)},0`).join(' '),
+            pins: r.relays.map((q) => ({
+              name: `Relay ${q.name}`, lat: q.lat, lon: q.lon,
+              description: `${q.lat.toFixed(6)}, ${q.lon.toFixed(6)}<br>Ground ${escapeHtml(fmt.elev(q.ground))} · antenna ${escapeHtml(fmt.height(state.hR))}`,
+            })),
+          };
+        }),
+      };
+    }
+
     const blob = buildKmz({
       name: title, description,
       lookAt: { lat: center.lat, lon: center.lon, range: span * 1.4 },
-      bounds, layers, stations, circles, path,
+      bounds, layers, stations, circles, path, relays,
     });
     const date = new Date().toISOString().slice(0, 10);
     const namePart = keys.map((k) => slug(state.labels[k]) || k).join('_');
@@ -954,6 +1176,7 @@ function setMode(mode) {
   for (const b of document.querySelectorAll('#modeSeg button')) b.setAttribute('aria-checked', String(b.dataset.mode === mode));
   $('#titleA').textContent = mode === 'dual' ? 'Station A' : 'Your station';
   if (mode === 'dual' && state.a && !state.b) setTarget('b');
+  if (mode !== 'dual') clearRelays('');
   syncMapObjects();
   writeHash();
   recompute();
@@ -1049,7 +1272,12 @@ function wireControls() {
   $('#kSel').addEventListener('change', (e) => { state.k = +e.target.value; writeHash(); recompute(); });
   $('#freqIn').addEventListener('change', (e) => {
     const f = +e.target.value;
-    if (f > 0) { state.freq = f; writeHash(); updateProfile(); }
+    if (f > 0) {
+      state.freq = f;
+      writeHash();
+      updateProfile();
+      if (relay) { relay.routes.forEach(evaluateRoute); renderRelays(); }
+    }
   });
   $('#unitsSel').addEventListener('change', (e) => {
     state.units = e.target.value;
@@ -1067,6 +1295,25 @@ function wireControls() {
   });
 
   $('#kmzBtn').addEventListener('click', exportKmz);
+  $('#relayBtn').addEventListener('click', runRelaySearch);
+  $('#meshBtn').addEventListener('click', () => {
+    state.freq = 915;
+    $('#freqIn').value = state.freq;
+    writeHash();
+    updateProfile();
+    if (relay) { relay.routes.forEach(evaluateRoute); renderRelays(); }
+    relayMsg('Frequency set to 915 MHz (US Meshtastic) for the hop and A→B checks. Change it under More settings.', 'info');
+  });
+  $('#relayList').addEventListener('click', (e) => {
+    const copy = e.target.closest('.ro-copy');
+    if (copy) { copyCoords(L.latLng(+copy.dataset.lat, +copy.dataset.lon)); return; }
+    const opt = e.target.closest('.relay-opt');
+    if (opt && relay) selectRelayRoute(+opt.dataset.i);
+  });
+  $('#relayList').addEventListener('keydown', (e) => {
+    const opt = e.target.closest('.relay-opt');
+    if (opt && relay && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectRelayRoute(+opt.dataset.i); }
+  });
 
   $('#panelToggle').addEventListener('click', () => {
     const panel = $('#panel');

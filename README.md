@@ -13,6 +13,7 @@ and areas out of sight are left as plain map.
 - **Place names** in the sidebar: the street address you searched for, or the neighborhood and city of a point you clicked.
 - **Antenna height** for your station and for the radio you want to reach, from on-the-ground to tower height, with presets (handheld, mast, tower).
 - **Two-station mode**: place A and B to see where both have coverage (**dayglow green**), A only (blue), or B only (orange). Areas neither can see are left as plain map. You also get an A↔B terrain profile with the Fresnel zone and a plain-language verdict.
+- **Relay sites** (two-station mode): find where one repeater or Meshtastic node (or at most two) could link A and B, shortest route first. Pins can be dragged to fine-tune, and each hop is rechecked.
 - **Map choices**: Esri satellite, USGS satellite, OpenTopoMap, USGS topo, OpenStreetMap, with optional place-name and road labels.
 - Earth curvature with radio refraction (4/3 Earth), adjustable range, feet/miles or meters/km.
 - **Coverage on/off** button on the map to compare against the plain imagery. Highlight strength is under More settings.

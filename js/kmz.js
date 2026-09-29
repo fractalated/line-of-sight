@@ -134,6 +134,8 @@ export async function canvasBytes(canvas) {
  *   stations: [{ key, name, lat, lon, color, icon: Uint8Array, description }],
  *   circles: [{ name, coords, color }],
  *   path: { name, coords, color, description } | null,
+ *   relays: { icon: Uint8Array, routes: [{ name, description, coords, visible,
+ *             pins: [{ name, lat, lon, description }] }] } | null,
  * }
  */
 export function buildKmz(doc) {
@@ -147,6 +149,11 @@ export function buildKmz(doc) {
     <Style id="ring-${i}"><LineStyle><color>${kmlColor(c.color, 1)}</color><width>2.5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>`),
     doc.path ? `
     <Style id="path"><LineStyle><color>${kmlColor(doc.path.color, 1)}</color><width>3</width></LineStyle></Style>` : '',
+    doc.relays ? `
+    <Style id="relay">
+      <IconStyle><scale>1.0</scale><Icon><href>files/pin-relay.png</href></Icon><hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/></IconStyle>
+    </Style>
+    <Style id="relay-route"><LineStyle><color>${kmlColor([155, 48, 255], 1)}</color><width>3.5</width></LineStyle></Style>` : '',
   ].join('');
 
   const b = doc.bounds;
@@ -191,6 +198,31 @@ export function buildKmz(doc) {
         <LineString><tessellate>1</tessellate><coordinates>${c.coords}</coordinates></LineString>
       </Placemark>`).join('');
 
+  const relays = doc.relays ? `
+    <Folder>
+      <name>Relay sites</name>
+      <open>1</open>
+      <description>Possible repeater / Meshtastic relay locations linking A and B, shortest route first.</description>${doc.relays.routes.map((r) => `
+      <Folder>
+        <name>${esc(r.name)}</name>
+        <visibility>${r.visible ? 1 : 0}</visibility>
+        <description>${cdata(r.description)}</description>
+        <Placemark>
+          <name>${esc(r.name)} route</name>
+          <visibility>${r.visible ? 1 : 0}</visibility>
+          <styleUrl>#relay-route</styleUrl>
+          <LineString><tessellate>1</tessellate><coordinates>${r.coords}</coordinates></LineString>
+        </Placemark>${r.pins.map((p) => `
+        <Placemark>
+          <name>${esc(p.name)}</name>
+          <visibility>${r.visible ? 1 : 0}</visibility>
+          <description>${cdata(p.description)}</description>
+          <styleUrl>#relay</styleUrl>
+          <Point><coordinates>${p.lon.toFixed(6)},${p.lat.toFixed(6)},0</coordinates></Point>
+        </Placemark>`).join('')}
+      </Folder>`).join('')}
+    </Folder>` : '';
+
   const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -211,6 +243,7 @@ export function buildKmz(doc) {
       <open>1</open>
       <description>Each layer can be turned on and off. Transparency can be changed in the layer's properties.</description>${overlays}
     </Folder>
+${relays}
     <Folder>
       <name>Analysis range</name>${rings}
     </Folder>
@@ -221,6 +254,7 @@ export function buildKmz(doc) {
   const files = [
     { name: 'doc.kml', data: new TextEncoder().encode(kml) },
     ...doc.stations.map((s) => ({ name: `files/pin-${s.key}.png`, data: s.icon })),
+    ...(doc.relays ? [{ name: 'files/pin-relay.png', data: doc.relays.icon }] : []),
     ...doc.layers.map((l) => ({ name: l.file, data: l.png })),
   ];
   return zip(files);

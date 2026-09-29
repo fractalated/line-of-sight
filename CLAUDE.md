@@ -54,6 +54,7 @@ Static site: plain HTML/CSS/ES modules, no bundler, no npm. Leaflet 1.9.4 from c
 | `js/viewshed.js` | R2 radial-sweep viewshed with Earth curvature/refraction. |
 | `js/profile.js` | A→B path profile: terrain + Earth bulge, LOS line, first Fresnel zone, verdict, canvas chart. |
 | `js/kmz.js` | KMZ export: store-only ZIP writer (CRC32), KML builder (GroundOverlays, pins, rings, path), pin icons. |
+| `js/relay.js` | Relay-site search (repeater / Meshtastic): one-relay and two-relay routes between A and B. |
 | `js/geo.js` | Web Mercator math, distance/bearing, Maidenhead, lat/lon parsing, multi-geocoder search, reverse geocoding. |
 
 **Recompute pipeline** (`recompute()` in app.js):
@@ -83,7 +84,7 @@ dark/red/purple, hash `s`/`o`) was removed on 2026-09-29; old links' `s`/`o` are
 **Two-station mode**: both viewsheds use the same "other radio" target height. The A↔B
 profile gives the direct simplex verdict: blocked / marginal (<60% of Fresnel zone 1 clear) / clear.
 
-**State** lives in the URL hash (shareable links): `m` mode (1/2), `a`,`b` lat,lon, `la`,`lb` place labels, `ha`,`hb`,`ht`
+**State** lives in the URL hash (shareable links): `m` mode (1/2), `a`,`b` lat,lon, `la`,`lb` place labels, `ha`,`hb`,`ht`,`hr` (relay)
 heights in **meters**, `r` radius in meters, `k`, `f` MHz, `u` units, `hl` highlight strength (0.15–0.9).
 localStorage keeps only the chosen base layer and label toggles (wrapped in try/catch).
 
@@ -185,6 +186,30 @@ math uses the DEM.
   overlay, against 59% without reprojection. Uses `lastPaint` (the per-pixel classes from the
   last `renderOverlay`). Validated with `unzip -t` and Python `zipfile`. Not yet opened in real
   Google Earth. If something looks off there, check drawOrder and LatLonBox first.
+- **Relay sites** (two-station mode, "Relay sites" section under the A→B profile; owner asked
+  for repeater/Meshtastic placement with at most two hops). `findRelays()` in relay.js:
+  - LOS is reciprocal, so **one relay** = any cell visible from both A and B, with the target
+    height = relay antenna height `hR` (default 10 ft, hash `hr`). Rank by dA + dB (shortest
+    route).
+  - **Two relays** only if no one-relay cell exists: R1 seen by A, R2 seen by B, R1↔R2 LOS.
+    Heuristic, not exhaustive. Candidates are the highest cell per ~400 m bin. Seeds on each side
+    are the 7 nearest the straight line plus 5 highest. Each seed gets a viewshed
+    (obsH = tgtH = hR), then it's joined with the other side's candidates. About 24 viewsheds:
+    ~3 s at 20 mi range with a progress message.
+  - Alternatives are spread ≥ ~1.5 km apart.
+  - app.js then rechecks every leg with `computeProfile` (the same bilinear profile as the A→B
+    chart) and drops routes with a blocked leg. The viewshed (nearest-cell) and the profile
+    (bilinear) can disagree on grazing paths. It shows up to 3 options.
+  - UI: purple diamond pins (`1`, or `1a`/`1b`, where `a` is nearer A), a dashed route line, and
+    a clickable option list with per-leg distance and clear/marginal/blocked at the frequency
+    setting. A "Meshtastic 915 MHz" button sets the frequency. Pins are draggable; a drag
+    rechecks that route's legs ("adjusted"). Popups have a copy-coordinates button.
+  - Results are cleared when stations, heights, range, k or the grid change (`relayKey()`), and
+    on switching to one-station mode. Frequency changes re-evaluate legs without clearing.
+  - The KMZ gets a "Relay sites" folder (one subfolder per option; the selected one visible).
+  - Tested 2026-09-29: Golden↔Boulder (direct blocked) → one relay on the foothills ridge,
+    0.7 s. Castle Rock↔The Hearth with 100 ft relays → two-relay routes ~9 mi. With 10 ft relays
+    → "no relay site found", which is correct there.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is
@@ -194,7 +219,8 @@ math uses the DEM.
 
 - Web Worker for the viewshed, so big radii don't block the UI.
 - Signal-strength mode (free-space path loss + knife-edge diffraction), with ERP and receiver sensitivity.
-- Repeater mode: pick a repeater site and show the areas that can reach it.
+- Repeater coverage mode: pick a repeater site and show the areas that can reach it.
+- Relay search: move it to a Web Worker; optionally allow 3+ hops or a max hop length for LoRa.
 - Tap-to-profile in single mode (profile from A to any tapped point).
 - GeoTIFF export; save named locations.
 - PWA / offline caching of tiles for field use.

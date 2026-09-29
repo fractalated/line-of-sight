@@ -407,6 +407,65 @@ body:not(.dual) .dual-only { display: none; }
   .copy-ping::before, .copy-ping span { animation-duration: 1.5s; animation-name: none; transform: scale(0.8); }
 }
 
+/* ---------- Relay sites ---------- */
+.relay-box { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.relay-intro { margin: -4px 0 0; }
+.relay-actions { display: flex; gap: 6px; }
+.relay-actions .btn { flex: 1; padding: 8px 10px; font-weight: 600; }
+.relay-list { display: flex; flex-direction: column; gap: 6px; }
+.relay-opt {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.relay-opt:hover { border-color: #9b30ff; }
+.relay-opt.on { border-color: #9b30ff; box-shadow: inset 3px 0 0 #9b30ff; }
+.relay-opt.bad { border-style: dashed; }
+.ro-head { font-size: 13px; }
+.ro-legs { color: var(--muted); line-height: 1.5; }
+.ro-coord { display: flex; align-items: center; gap: 6px; }
+.ro-coord .mono { flex: 1; }
+.ro-copy { padding: 2px 8px; font-size: 12px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+.v { font-weight: 700; }
+.v.clear { color: var(--good); }
+.v.marginal { color: var(--warn); }
+.v.blocked { color: var(--bad); }
+.rbadge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: #9b30ff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.relay-marker {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  transform: rotate(45deg) scale(0.85);
+  background: #9b30ff;
+  border: 3px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  opacity: 0.75;
+  color: #fff;
+  font: 700 12px/24px system-ui, sans-serif;
+  text-align: center;
+}
+.relay-marker.sel { opacity: 1; transform: rotate(45deg) scale(1); }
+.relay-marker span { display: block; transform: rotate(-45deg); } /* keep the label upright */
+.relay-pop { font-size: 12.5px; line-height: 1.45; }
+.relay-pop .btn { margin-top: 6px; padding: 4px 10px; font-size: 12px; }
+
 /* ---------- Station markers ---------- */
 .st-marker {
   width: 28px;
