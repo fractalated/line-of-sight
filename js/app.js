@@ -1,6 +1,6 @@
 // Line of Sight — UI, map, and the recompute pipeline.
 // Flow: stations/radius -> choose DEM zoom + tile range -> load elevation grid
-// -> viewshed per station -> paint shading canvas -> Leaflet image overlay.
+// -> viewshed per station -> paint coverage highlight canvas -> Leaflet image overlay.
 
 import {
   lonToX, latToY, xToLon, yToLat, metersPerPixel, distanceM, bearingDeg,
@@ -16,15 +16,17 @@ const FT = 0.3048, MI = 1609.344, KM = 1000;
 const MAX_GRID = 2048; // max analysis size in DEM pixels
 const MAX_Z = 14, MIN_Z = 4;
 
-const SHADES = { dark: [20, 24, 40], red: [215, 28, 28], purple: [115, 30, 170] };
+// Coverage is highlighted; ground out of coverage is left as plain map (the owner found
+// shaded-vs-unshaded too hard to tell apart).
+const PINK = [255, 20, 147]; // one station: in line of sight
+const GREEN = [57, 255, 20]; // two stations: seen by both A and B (dayglow green)
 const ONLY_A = [43, 120, 255];
 const ONLY_B = [255, 150, 20];
-// Two-station overlap: hot pink with a white outline, drawn at a fixed strength so it
-// stands out no matter how the shade-strength slider is set.
-const BOTH = [255, 20, 147];
-const BOTH_EDGE = [255, 255, 255];
-const BOTH_ALPHA = 0.6;
-const BOTH_EDGE_ALPHA = 0.85;
+const EDGE = [255, 255, 255]; // outline around the two-station overlap, so small patches pop
+const EDGE_ALPHA = 0.85;
+const SIDE_FACTOR = 0.75; // A-only / B-only drawn a little lighter than the overlap
+const GRAY = [20, 24, 40]; // optional "not covered" layer in the KMZ (off by default)
+const DEFAULT_HL = 0.5; // highlight strength (alpha), set by the slider
 const RADII = { us: [1, 2, 3, 5, 10, 15, 20, 30, 40, 60], metric: [2, 3, 5, 10, 15, 25, 35, 50, 65, 100] };
 const PRESETS = {
   us: [[0, 'On the dirt'], [5, 'Handheld'], [30, 'Mast'], [100, 'Tower']],
@@ -44,8 +46,7 @@ const state = {
   k: 4 / 3,
   freq: 146.52, // MHz, national 2 m simplex calling frequency
   units: 'us',
-  shade: 'dark',
-  opacity: 0.3,
+  highlight: DEFAULT_HL,
   target: 'a', // which station a map click places in dual mode
   // Sidebar place labels: the searched address, or neighborhood + city for clicked points.
   labels: { a: '', b: '' },
@@ -69,8 +70,8 @@ function readHash() {
   state.k = num('k', state.k);
   state.freq = num('f', state.freq);
   if (p.get('u') === 'metric') state.units = 'metric';
-  if (SHADES[p.get('s')]) state.shade = p.get('s');
-  state.opacity = num('o', state.opacity);
+  // 'hl' replaced the old shade params ('s', 'o'), which are ignored in old links.
+  state.highlight = Math.min(0.9, Math.max(0.15, num('hl', DEFAULT_HL)));
   if (state.mode === 'dual' && state.a && !state.b) state.target = 'b';
 }
 
@@ -89,8 +90,7 @@ function writeHash() {
   p.set('k', +state.k.toFixed(4));
   p.set('f', state.freq);
   p.set('u', state.units);
-  p.set('s', state.shade);
-  p.set('o', state.opacity);
+  p.set('hl', state.highlight);
   history.replaceState(null, '', '#' + p.toString().replace(/%2C/g, ','));
 }
 
@@ -119,7 +119,7 @@ const map = L.map('map', { zoomControl: false, maxZoom: 19, worldCopyJump: true 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 L.control.scale({ position: 'bottomright' }).addTo(map);
 map.createPane('labels');
-map.getPane('labels').style.zIndex = 450; // above the shading, below markers
+map.getPane('labels').style.zIndex = 450; // above the coverage highlight, below markers
 map.getPane('labels').classList.add('leaflet-labels-pane');
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
@@ -161,11 +161,11 @@ losLayer.addTo(map);
 L.control.layers(baseLayers, {
   'Place names': placeLabels,
   'Roads': roadLabels,
-  'Line-of-sight shading': losLayer,
+  'Line-of-sight coverage': losLayer,
 }, { position: 'topright' }).addTo(map);
 
-// On-map button to show/hide the shading (stays reachable when the panel is collapsed).
-// Kept in sync with the layers menu, which has its own "Line-of-sight shading" checkbox.
+// On-map button to show/hide the coverage highlight (stays reachable when the panel is
+// collapsed). Kept in sync with the layers menu's "Line-of-sight coverage" checkbox.
 const ShadingToggle = L.Control.extend({
   options: { position: 'topright' },
   onAdd() {
@@ -190,8 +190,8 @@ const ShadingToggle = L.Control.extend({
     const on = map.hasLayer(losLayer);
     this._btn.classList.toggle('off', !on);
     this._btn.setAttribute('aria-pressed', String(on));
-    this._btn.title = on ? 'Hide line-of-sight shading' : 'Show line-of-sight shading';
-    this._btn.querySelector('span').textContent = on ? 'Shading on' : 'Shading off';
+    this._btn.title = on ? 'Hide the coverage highlight' : 'Show the coverage highlight';
+    this._btn.querySelector('span').textContent = on ? 'Coverage on' : 'Coverage off';
   },
 });
 const shadingToggle = new ShadingToggle().addTo(map);
@@ -567,7 +567,6 @@ function renderOverlay() {
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(w, h);
   const d = img.data;
-  const shade = SHADES[state.shade];
   const A = results[0].vis, B = results[1] ? results[1].vis : null;
   const counts = { area: 0, both: 0, a: 0, b: 0 };
 
@@ -594,21 +593,21 @@ function renderOverlay() {
     }
   }
 
-  // Pass 2: paint. Shading uses the strength slider; the two-station overlap is always bold.
-  const shadeA = Math.round(state.opacity * 255);
-  const bothA = Math.round(BOTH_ALPHA * 255);
-  const edgeA = Math.round(BOTH_EDGE_ALPHA * 255);
+  // Pass 2: paint coverage only; hidden ground (class 1) stays transparent, i.e. plain map.
+  const hlA = Math.round(state.highlight * 255);
+  const sideA = Math.round(state.highlight * SIDE_FACTOR * 255);
+  const edgeA = Math.round(EDGE_ALPHA * 255);
   const put = (o, c, a) => { d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = a; };
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const j = y * w + x, c = cls[j], o = j * 4;
-      if (c === 1) put(o, shade, shadeA);
-      else if (c === 2) put(o, ONLY_A, shadeA);
-      else if (c === 3) put(o, ONLY_B, shadeA);
-      else if (c === 4 && B) {
+      if (c === 2) put(o, ONLY_A, sideA);
+      else if (c === 3) put(o, ONLY_B, sideA);
+      else if (c === 4 && !B) put(o, PINK, hlA);
+      else if (c === 4) {
         const edge = x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
           cls[j - 1] !== 4 || cls[j + 1] !== 4 || cls[j - w] !== 4 || cls[j + w] !== 4;
-        if (edge) put(o, BOTH_EDGE, edgeA); else put(o, BOTH, bothA);
+        if (edge) put(o, EDGE, edgeA); else put(o, GREEN, hlA);
       }
     }
   }
@@ -743,8 +742,8 @@ function fmtPct(n, total) {
 }
 
 function renderLegend() {
-  const sh = SHADES[state.shade];
-  const sw = (c, a = state.opacity, cls = '') => `<span class="sw ${cls}" style="background: rgba(${c[0]},${c[1]},${c[2]},${a})"></span>`;
+  const sw = (c, a = state.highlight, cls = '') => `<span class="sw ${cls}" style="background: rgba(${c[0]},${c[1]},${c[2]},${a})"></span>`;
+  const side = state.highlight * SIDE_FACTOR;
   const clear = '<span class="sw"></span>';
   const ring = '<span class="sw ring"></span>';
   const dual = state.mode === 'dual';
@@ -754,13 +753,13 @@ function renderLegend() {
   const c = st ? st.counts : { area: 0, both: 0, a: 0, b: 0 };
   let rows;
   if (dual) {
-    rows = row(sw(BOTH, BOTH_ALPHA, 'both'), '<strong>Seen by both A and B</strong>', c.both, 'lg-both')
-      + row(sw(ONLY_A), 'Seen by A only', c.a)
-      + row(sw(ONLY_B), 'Seen by B only', c.b)
-      + row(sw(sh), 'Seen by neither', c.area - c.both - c.a - c.b);
+    rows = row(sw(GREEN, state.highlight, 'edged'), '<strong>Seen by both A and B</strong>', c.both, 'lg-both')
+      + row(sw(ONLY_A, side), 'Seen by A only', c.a)
+      + row(sw(ONLY_B, side), 'Seen by B only', c.b)
+      + row(clear, 'Seen by neither (plain map)', c.area - c.both - c.a - c.b);
   } else {
-    rows = row(clear, 'In line of sight (unshaded)', c.both)
-      + row(sw(sh), 'Not in line of sight', c.area - c.both);
+    rows = row(sw(PINK), '<strong>In line of sight</strong>', c.both, 'lg-los')
+      + row(clear, 'Not in line of sight (plain map)', c.area - c.both);
   }
   const total = st
     ? `<div class="lg-row lg-total"><span></span><span>Total analyzed</span>${cell(c.area)}</div>
@@ -794,7 +793,7 @@ function classLayerCanvas(p, bounds, match, color, outline = false) {
       if (outline) {
         const edge = i === 0 || sy === 0 || i === w - 1 || sy === h - 1 ||
           !match(cls[k - 1]) || !match(cls[k + 1]) || !match(cls[k - w]) || !match(cls[k + w]);
-        if (edge) col = BOTH_EDGE;
+        if (edge) col = EDGE;
       }
       const o = (j * w + i) * 4;
       d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
@@ -822,17 +821,18 @@ async function exportKmz() {
     };
     const st = lastStats, c = st.counts;
     const areaTxt = (n) => `${fmtArea(n, st.pxArea)}, ${fmtPct(n, c.area)}`;
-    const shade = SHADES[state.shade];
+    // Same look as the app: coverage highlighted, "not covered" layers included but off.
+    const hl = state.highlight, side = hl * SIDE_FACTOR;
     const defs = p.dual
       ? [
-        { name: 'Seen by both A and B', n: c.both, match: (v) => v === 4, color: BOTH, alpha: 0.7, outline: true, order: 4, file: 'both' },
-        { name: 'Seen by A only', n: c.a, match: (v) => v === 2, color: ONLY_A, alpha: 0.45, order: 3, file: 'a-only' },
-        { name: 'Seen by B only', n: c.b, match: (v) => v === 3, color: ONLY_B, alpha: 0.45, order: 2, file: 'b-only' },
-        { name: 'Seen by neither', n: c.area - c.both - c.a - c.b, match: (v) => v === 1, color: shade, alpha: state.opacity, order: 1, file: 'neither' },
+        { name: 'Seen by both A and B', n: c.both, match: (v) => v === 4, color: GREEN, alpha: hl, outline: true, order: 4, file: 'both' },
+        { name: 'Seen by A only', n: c.a, match: (v) => v === 2, color: ONLY_A, alpha: side, order: 3, file: 'a-only' },
+        { name: 'Seen by B only', n: c.b, match: (v) => v === 3, color: ONLY_B, alpha: side, order: 2, file: 'b-only' },
+        { name: 'Seen by neither (gray, optional)', n: c.area - c.both - c.a - c.b, match: (v) => v === 1, color: GRAY, alpha: 0.35, order: 1, file: 'neither', hidden: true },
       ]
       : [
-        { name: 'Not in line of sight', n: c.area - c.both, match: (v) => v === 1, color: shade, alpha: state.opacity, order: 1, file: 'not-visible' },
-        { name: 'In line of sight (highlight)', n: c.both, match: (v) => v === 4, color: [40, 200, 90], alpha: 0.45, order: 2, file: 'visible', hidden: true },
+        { name: 'In line of sight', n: c.both, match: (v) => v === 4, color: PINK, alpha: hl, order: 2, file: 'visible' },
+        { name: 'Not in line of sight (gray, optional)', n: c.area - c.both, match: (v) => v === 1, color: GRAY, alpha: 0.35, order: 1, file: 'not-visible', hidden: true },
       ];
     const layers = [];
     for (const dfn of defs) {
@@ -1027,8 +1027,7 @@ function syncAllControls() {
   $('#kSel').value = [...$('#kSel').options].reduce((a, o) => (Math.abs(+o.value - state.k) < Math.abs(+a - state.k) ? o.value : a), '1.3333333');
   $('#freqIn').value = state.freq;
   $('#unitsSel').value = state.units;
-  $('#shadeSel').value = state.shade;
-  $('#opacityIn').value = state.opacity;
+  $('#opacityIn').value = state.highlight;
 }
 
 let opacityTimer = 0;
@@ -1059,15 +1058,9 @@ function wireControls() {
     writeHash();
     recompute();
   });
-  $('#shadeSel').addEventListener('change', (e) => {
-    state.shade = e.target.value;
-    writeHash();
-    renderOverlay();
-    renderLegend();
-  });
   $('#opacityIn').addEventListener('input', (e) => {
-    state.opacity = +e.target.value;
-    // Alpha is baked into the overlay pixels so the overlap can stay bold; repaint, throttled.
+    state.highlight = +e.target.value;
+    // Alpha is baked into the overlay pixels (colors differ per class); repaint, throttled.
     if (!opacityTimer) opacityTimer = setTimeout(() => { opacityTimer = 0; renderOverlay(); }, 40);
     renderLegend();
     writeHash();

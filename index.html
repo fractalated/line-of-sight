@@ -7,7 +7,7 @@
   <meta name="description" content="VHF/UHF simplex line-of-sight planner: see which areas on a satellite map your radio can see.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/style.css?v=20260925-11">
+  <link rel="stylesheet" href="css/style.css?v=20260929-1">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -103,16 +103,8 @@
           </select>
         </label>
         <label class="field row">
-          <span class="lbl">Shade color</span>
-          <select id="shadeSel">
-            <option value="dark">Dark</option>
-            <option value="red">Red</option>
-            <option value="purple">Purple</option>
-          </select>
-        </label>
-        <label class="field row">
-          <span class="lbl">Shade strength</span>
-          <input id="opacityIn" type="range" min="0.1" max="0.9" step="0.05">
+          <span class="lbl">Highlight strength</span>
+          <input id="opacityIn" type="range" min="0.15" max="0.9" step="0.05">
         </label>
       </details>
 
@@ -147,14 +139,14 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/geo.js": "./js/geo.js?v=20260925-11",
-      "./js/terrain.js": "./js/terrain.js?v=20260925-11",
-      "./js/viewshed.js": "./js/viewshed.js?v=20260925-11",
-      "./js/profile.js": "./js/profile.js?v=20260925-11",
-      "./js/kmz.js": "./js/kmz.js?v=20260925-11"
+      "./js/geo.js": "./js/geo.js?v=20260929-1",
+      "./js/terrain.js": "./js/terrain.js?v=20260929-1",
+      "./js/viewshed.js": "./js/viewshed.js?v=20260929-1",
+      "./js/profile.js": "./js/profile.js?v=20260929-1",
+      "./js/kmz.js": "./js/kmz.js?v=20260929-1"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=20260925-11"></script>
+  <script type="module" src="js/app.js?v=20260929-1"></script>
 </body>
 </html>
