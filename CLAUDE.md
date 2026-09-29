@@ -54,6 +54,7 @@ Static site: plain HTML/CSS/ES modules, no bundler, no npm. Leaflet 1.9.4 from c
 | `js/viewshed.js` | R2 radial-sweep viewshed with Earth curvature/refraction. |
 | `js/profile.js` | A→B path profile: terrain + Earth bulge, LOS line, first Fresnel zone, verdict, canvas chart. |
 | `js/kmz.js` | KMZ export: store-only ZIP writer (CRC32), KML builder (GroundOverlays, pins, rings, path), pin icons. |
+| `js/pins.js` | Pins-only export builders: GPX (waypoints + relay routes), CSV, simple KML. |
 | `js/relay.js` | Relay-site search (repeater / Meshtastic): one-relay and two-relay routes between A and B. |
 | `js/geo.js` | Web Mercator math, distance/bearing, Maidenhead, lat/lon parsing, multi-geocoder search, reverse geocoding. |
 
@@ -210,6 +211,19 @@ math uses the DEM.
   - Tested 2026-09-29: Golden↔Boulder (direct blocked) → one relay on the foothills ridge,
     0.7 s. Castle Rock↔The Hearth with 100 ft relays → two-relay routes ~9 mi. With 10 ft relays
     → "no relay site found", which is correct there.
+- **Pins-only export** ("Export pins only: GPX / CSV / KML" row under the KMZ button;
+  `collectPins()` / `exportPins()` in app.js, builders in pins.js). The owner asked to export
+  pins after moving them. Moved relay pins were already in the KMZ, so the owner chose a
+  separate pins-only file. It contains the stations and every relay pin from the current relay
+  results, at their current (possibly dragged) positions, plus ground elevation, antenna height,
+  place label, relay option, and notes (grid square, "moved by hand", per-leg results).
+  - GPX 1.1: waypoints (`ele` in meters per spec) plus one `<rte>` per relay option
+    (A → relays → B).
+  - CSV: BOM for Excel, elevations in the app's units.
+  - KML: Google paddle icons by URL (not embedded; the KMZ is the offline one).
+  - Relay pins are included only while `relay.key === relayKey()`. The note under the buttons
+    says whether relays are included.
+  - Shares `downloadBlob()` / `fileStem()` with the KMZ export.
 - Earth curvature options: k = 4/3 (radio, default), 1 (optical), 0 (flat).
 - Default frequency: 146.52 MHz (national 2 m simplex). Used only for the Fresnel zone in the profile.
 - No backend. The owner also has Cloudflare and a Claude API key available if a backend is

@@ -11,6 +11,7 @@ import { computeViewshed, VISIBLE } from './viewshed.js';
 import { computeProfile, drawProfile } from './profile.js';
 import { buildKmz, circleCoords, pinIcon, canvasBytes } from './kmz.js';
 import { findRelays } from './relay.js';
+import { toGpx, toCsv, toKml } from './pins.js';
 
 const L = window.L;
 const FT = 0.3048, MI = 1609.344, KM = 1000;
@@ -779,6 +780,7 @@ function renderLegend() {
        <div class="lg-note">Everything within ${fmt.dist(state.radius)} of ${dual ? 'A or B' : 'your station'}. The rows add up to the total.</div>`
     : '';
   $('#kmzBtn').disabled = !st;
+  updatePinExport();
   $('#legend').innerHTML = rows + total + `<div class="lg-row lg-ring">${ring}<span>Analysis range</span><span></span><span></span></div>`;
 }
 
@@ -834,6 +836,7 @@ function relayMsg(html, kind = 'info') {
 function clearRelays(message) {
   relay = null;
   relayLayer.clearLayers();
+  updatePinExport();
   $('#relayList').innerHTML = '';
   relayMsg(message || '', 'info');
 }
@@ -932,6 +935,7 @@ function renderRelays(fit = false) {
     }
   });
   renderRelayList();
+  updatePinExport();
   if (fit) {
     const r = relay.routes[relay.selected];
     map.fitBounds(L.latLngBounds([[state.a.lat, state.a.lon], [state.b.lat, state.b.lon], ...r.relays.map((p) => [p.lat, p.lon])]), viewPadding());
@@ -1002,6 +1006,91 @@ function classLayerCanvas(p, bounds, match, color, outline = false) {
   }
   x.putImageData(img, 0, 0);
   return any ? c : null;
+}
+
+// "castle-rock-co_the-hearth-co_2026-09-29" from the station labels and today's date.
+function fileStem(keys) {
+  const date = new Date().toISOString().slice(0, 10);
+  return `${keys.map((k) => slug(state.labels[k]) || k).join('_')}_${date}`;
+}
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+// ---------- Pins-only export (GPX / CSV / KML) ----------
+// Stations and relay pins exactly where they are now, including any dragged relays.
+function collectPins() {
+  const keys = stationsShown().filter((k) => state[k]);
+  const ground = {};
+  if (last) for (const r of last.results) ground[r.key] = r.ground;
+  const hts = { a: state.hA, b: state.hB };
+  const stations = {};
+  const pins = keys.map((key) => {
+    const s = state[key];
+    const K = key.toUpperCase();
+    const pin = {
+      name: state.mode === 'dual' ? `Station ${K}` : 'Your station',
+      type: 'Station', lat: s.lat, lon: s.lon, groundM: ground[key] ?? null, antennaM: hts[key],
+      place: state.labels[key] || '', option: '',
+      notes: `${toMaidenhead(s.lat, s.lon)} · antenna ${fmt.height(hts[key])}`,
+    };
+    stations[key] = pin;
+    return pin;
+  });
+  const routes = [];
+  if (state.mode === 'dual' && relay && relay.key === relayKey()) {
+    relay.routes.forEach((r, i) => {
+      const legs = r.legs.map((l) => `${l.from}→${l.to} ${fmt.dist(l.distM)} ${l.verdict}`).join('; ');
+      const relayPins = r.relays.map((p) => ({
+        name: `Relay ${p.name}`, type: 'Relay', lat: p.lat, lon: p.lon, groundM: p.ground, antennaM: state.hR,
+        place: '', option: `Option ${i + 1}`,
+        notes: `${r.moved ? 'moved by hand · ' : ''}antenna ${fmt.height(state.hR)} · ${legs}`,
+      }));
+      pins.push(...relayPins);
+      routes.push({
+        name: `Option ${i + 1}: ${r.relays.length} relay${r.relays.length > 1 ? 's' : ''}, ${fmt.dist(r.totalM)}`,
+        points: [stations.a, ...relayPins, stations.b],
+      });
+    });
+  }
+  return { keys, pins, routes };
+}
+
+function exportPins(format) {
+  const { keys, pins, routes } = collectPins();
+  if (!pins.length) return;
+  const title = `Line of Sight pins: ${keys.map((k) => state.labels[k] || k.toUpperCase()).join(' & ')}`;
+  const units = state.units === 'us'
+    ? { elevLabel: 'ft', toElev: (m) => m / FT }
+    : { elevLabel: 'm', toElev: (m) => m };
+  const out = {
+    gpx: () => [toGpx({ title, pins, routes }), 'application/gpx+xml'],
+    csv: () => [toCsv({ pins }, units), 'text/csv;charset=utf-8'],
+    kml: () => [toKml({ title, pins, routes }), 'application/vnd.google-earth.kml+xml'],
+  }[format];
+  const [text, type] = out();
+  const name = `line-of-sight-pins_${fileStem(keys)}.${format}`;
+  downloadBlob(new Blob([text], { type }), name);
+  const relays = pins.filter((p) => p.type === 'Relay').length;
+  showToast(name, true, `Exported ${pins.length - relays} station${pins.length - relays === 1 ? '' : 's'}${relays ? ` and ${relays} relay pin${relays === 1 ? '' : 's'}` : ''}`);
+}
+
+function updatePinExport() {
+  const has = stationsShown().some((k) => state[k]);
+  for (const b of document.querySelectorAll('#pinExport button')) b.disabled = !has;
+  const hasRelays = state.mode === 'dual' && relay && relay.key === relayKey();
+  $('#pinExportNote').textContent = hasRelays
+    ? 'Stations plus every relay pin, where they are now.'
+    : state.mode === 'dual'
+      ? 'Stations only. Run “Find relay sites” to include relay pins.'
+      : 'Your station’s pin.';
 }
 
 const slug = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
@@ -1128,16 +1217,9 @@ async function exportKmz() {
       lookAt: { lat: center.lat, lon: center.lon, range: span * 1.4 },
       bounds, layers, stations, circles, path, relays,
     });
-    const date = new Date().toISOString().slice(0, 10);
-    const namePart = keys.map((k) => slug(state.labels[k]) || k).join('_');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `line-of-sight_${namePart}_${date}.kmz`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    showToast(`${a.download}`, true, 'KMZ downloaded');
+    const name = `line-of-sight_${fileStem(keys)}.kmz`;
+    downloadBlob(blob, name);
+    showToast(name, true, 'KMZ downloaded');
   } catch (err) {
     console.error(err);
     showToast(`Export failed: ${err.message}`, false, 'KMZ export failed');
@@ -1295,6 +1377,10 @@ function wireControls() {
   });
 
   $('#kmzBtn').addEventListener('click', exportKmz);
+  $('#pinExport').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-fmt]');
+    if (b) exportPins(b.dataset.fmt);
+  });
   $('#relayBtn').addEventListener('click', runRelaySearch);
   $('#meshBtn').addEventListener('click', () => {
     state.freq = 915;

@@ -7,7 +7,7 @@
   <meta name="description" content="VHF/UHF simplex line-of-sight planner: see which areas on a satellite map your radio can see.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/style.css?v=20260929-3">
+  <link rel="stylesheet" href="css/style.css?v=20260929-4">
 </head>
 <body>
   <div id="map" aria-label="Map"></div>
@@ -114,6 +114,17 @@
         <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="export-label">Export KMZ for Google Earth</span>
       </button>
+      <div id="pinExport" class="pin-export">
+        <div class="pin-export-row">
+          <span class="lbl">Export pins only</span>
+          <span class="pin-btns">
+            <button type="button" class="btn" data-fmt="gpx" title="GPS units and phone map apps: waypoints plus relay routes" disabled>GPX</button>
+            <button type="button" class="btn" data-fmt="csv" title="Spreadsheet: one row per pin" disabled>CSV</button>
+            <button type="button" class="btn" data-fmt="kml" title="Google Earth: pins and route lines, no coverage" disabled>KML</button>
+          </span>
+        </div>
+        <div id="pinExportNote" class="lg-note"></div>
+      </div>
 
       <section id="profileBox" class="profile" hidden>
         <div class="profile-head">
@@ -154,15 +165,16 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/geo.js": "./js/geo.js?v=20260929-3",
-      "./js/terrain.js": "./js/terrain.js?v=20260929-3",
-      "./js/viewshed.js": "./js/viewshed.js?v=20260929-3",
-      "./js/profile.js": "./js/profile.js?v=20260929-3",
-      "./js/kmz.js": "./js/kmz.js?v=20260929-3",
-      "./js/relay.js": "./js/relay.js?v=20260929-3"
+      "./js/geo.js": "./js/geo.js?v=20260929-4",
+      "./js/terrain.js": "./js/terrain.js?v=20260929-4",
+      "./js/viewshed.js": "./js/viewshed.js?v=20260929-4",
+      "./js/profile.js": "./js/profile.js?v=20260929-4",
+      "./js/kmz.js": "./js/kmz.js?v=20260929-4",
+      "./js/relay.js": "./js/relay.js?v=20260929-4",
+      "./js/pins.js": "./js/pins.js?v=20260929-4"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=20260929-3"></script>
+  <script type="module" src="js/app.js?v=20260929-4"></script>
 </body>
 </html>
